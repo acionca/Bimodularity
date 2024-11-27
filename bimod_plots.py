@@ -68,6 +68,7 @@ def plot_community_scheme(
     x_names: [str, str] = ["Sending 1", "Sending 2"],
     y_names: [str, str] = ["Receiving 1", "Receiving 2"],
     arrow_colors: Optional[np.ndarray] = None,
+    plot_cycle: bool = False,
 ) -> Optional[Axes]:
     # First plot (A)
     xy_pos = np.array([[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]])
@@ -112,6 +113,10 @@ def plot_community_scheme(
         (-0.2, 0.3),
         (0.2, -0.3),
     ]
+
+    if plot_cycle:
+        starting_points = starting_points[:-2]
+        ending_points = ending_points[:-2]
 
     if arrow_colors is None:
         arrow_colors = ["black"] * len(starting_points)
