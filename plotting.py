@@ -960,6 +960,7 @@ def plot_bicommunity(
     lw=1,
     edge_alpha=0.05,
     draw_arrows=False,
+    cmap=None,
 ):
     if fig is None:
         fig, axes = plt.subplots(figsize=(10, 10))
@@ -983,6 +984,9 @@ def plot_bicommunity(
     send_only = np.logical_and(send_com > 0, receive_com == 0)
     receive_only = np.logical_and(send_com == 0, receive_com > 0)
 
+    if cmap is None:
+        cmap = "RdBu_r"
+
     axes.scatter(
         node_pos[0, is_in_none],
         node_pos[1, is_in_none],
@@ -997,7 +1001,8 @@ def plot_bicommunity(
         node_pos[1, send_only],
         s=80,
         c=send_com[send_only],
-        cmap="RdBu_r",
+        # cmap="RdBu_r",
+        cmap=cmap,
         edgecolor="k",
         marker="s",
         linewidth=lw,
@@ -1010,7 +1015,8 @@ def plot_bicommunity(
         node_pos[1, receive_only],
         s=80,
         c=-receive_com[receive_only],
-        cmap="RdBu_r",
+        # cmap="RdBu_r",
+        cmap=cmap,
         edgecolor="k",
         marker="D",
         linewidth=lw,
@@ -1023,7 +1029,7 @@ def plot_bicommunity(
         node_pos[1, is_in_both],
         s=80,
         c=send_com[is_in_both] - receive_com[is_in_both],
-        cmap="RdBu_r",
+        cmap=cmap,
         # c="w",
         edgecolor="k",
         marker="o",
@@ -1109,6 +1115,7 @@ def plot_all_bicommunity(
     nrows=1,
     draw_legend=True,
     legend_on_ax=False,
+    cmap=None,
     **kwargs,
 ):
 
@@ -1140,6 +1147,11 @@ def plot_all_bicommunity(
     for i, title in enumerate(titles):
         com_axes[i].set_title(title, fontsize=20)
 
+    if cmap is None:
+        cmap = plt.get_cmap("RdBu")
+    elif isinstance(cmap, str):
+        cmap = plt.get_cmap(cmap, 5)
+
     for i, (send, receive) in enumerate(zip(send_com, receive_com)):
 
         com_axes[i].set_facecolor("none")
@@ -1154,6 +1166,7 @@ def plot_all_bicommunity(
                 fig=fig,
                 axes=com_axes[i],
                 graph_pos=graph_pos,
+                cmap=cmap,
                 **kwargs,
             )
 
@@ -1165,7 +1178,7 @@ def plot_all_bicommunity(
 
     leg_titles = ["Send", "Both", "Receive"]
     markers = ["s", "o", "D"]
-    cmap = plt.get_cmap("RdBu", 5)
+
     colors = [cmap(i) for i in range(3)]
     custom_legend = [
         Line2D(
@@ -1530,6 +1543,7 @@ def plot_send_receive_surface(
     axes=None,
     max_value=1,
     per_hemi=True,
+    view_top=False,
     figsize=(20, 5),
     plot_cbar=False,
     cbar_h=1,
@@ -1541,7 +1555,7 @@ def plot_send_receive_surface(
 
     if axes is None:
         fig, axes = plt.subplots(
-            ncols=4,
+            ncols=4 + 1 * view_top,
             nrows=1,
             figsize=figsize,
             subplot_kw={"projection": "3d"},
@@ -1587,18 +1601,25 @@ def plot_send_receive_surface(
         hemis_def = [fsaverage.pial_left, fsaverage.pial_right]
     bgs = [fsaverage.sulc_left, fsaverage.sulc_right]
 
-    views = ["lateral", "medial"]
+    views = ["lateral", "medial", (90, -90.0)]
 
+    axes_show = axes
     if per_hemi:
-        # left - right
-        view_order = [0, 1, 1, 0]
-        hemi_order = [0, 0, 1, 1]
+        if view_top:
+            # left - right
+            view_order = [0, 1, 2, 2, 1, 0]
+            hemi_order = [0, 0, 0, 1, 1, 1]
+            axes_show = np.array(axes)[[0, 1, 2, 2, 3, 4]]
+        else:
+            # left - right
+            view_order = [0, 1, 1, 0]
+            hemi_order = [0, 0, 1, 1]
     else:
         # lateral - medial
         view_order = [0, 0, 1, 1]
         hemi_order = [0, 1, 0, 1]
 
-    for ax_i, ax in enumerate(axes):
+    for ax_i, ax in enumerate(axes_show):
 
         texture = vol_to_surf(
             surf_map,
@@ -1634,5 +1655,114 @@ def plot_send_receive_surface(
             colors=[contour_color],
             axes=ax,
         )
+
+    return fig, axes
+
+
+def plot_send_receive_surface_top(
+    surf_map,
+    contour_color,
+    surf_cmap="RdBu_r",
+    surface_name="fsaverage5",
+    inflate=True,
+    fig=None,
+    axes=None,
+    max_value=1,
+    figsize=(20, 5),
+    plot_cbar=False,
+    cbar_h=1,
+):
+
+    fsaverage = datasets.fetch_surf_fsaverage(surface_name)
+
+    # max_value = 0.9 * np.abs(node_signal).max()  # 0.5
+
+    if axes is None:
+        fig, axes = plt.subplots(
+            figsize=figsize,
+            subplot_kw={"projection": "3d"},
+        )
+
+    ax = axes
+
+    if plot_cbar:
+
+        x_pos = ax.get_position().bounds[0]
+        y_pos = ax.get_position().bounds[1]
+        sizex = ax.get_position().bounds[2]
+        sizey = ax.get_position().bounds[3]
+
+        # cmap_ax = fig.add_axes([0.1, 0.5, 0.8, 0.05])
+        # cmap_ax = fig.add_axes([0.2, 0.5, 0.6, 0.025])
+        ax_pos = [
+            x_pos + sizex,
+            y_pos + sizey / 4,
+            # np.mean(sizes),
+            # cbar_h * np.mean(sizes) / 10,
+            cbar_h * sizex / 20,
+            sizey * 2 / 3,
+        ]
+        cmap_ax = fig.add_axes(ax_pos)
+
+        norm = Normalize(vmin=-max_value, vmax=max_value)
+        cbar = fig.colorbar(
+            ScalarMappable(norm=norm, cmap=surf_cmap),
+            cax=cmap_ax,
+            # orientation="horizontal",
+            orientation="vertical",
+            ticks=np.linspace(-max_value, max_value, 5),
+        )
+        cbar.ax.tick_params(labelsize=18)
+
+    # fig.suptitle(f"$Q(C_{{{i+1}}})={bimod[com_id]:1.2f}$")
+
+    hemis = ["left", "right"]
+    surf_def = [fsaverage.pial_left, fsaverage.pial_right]
+    if inflate:
+        hemis_def = [fsaverage.infl_left, fsaverage.infl_right]
+    else:
+        hemis_def = [fsaverage.pial_left, fsaverage.pial_right]
+    bgs = [fsaverage.sulc_left, fsaverage.sulc_right]
+
+    # views = ["lateral", "medial"]
+    # views = ["dorsal"] * 2
+    views = [(90, -90.0)] * 2
+
+    for ax_i in range(2):
+
+        texture = vol_to_surf(
+            surf_map,
+            surf_def[ax_i],
+            interpolation="nearest",
+            radius=0.0,
+            n_samples=1,
+        )
+        figure = plot_surf_stat_map(
+            hemis_def[ax_i],
+            texture,
+            hemi=hemis[ax_i],
+            view=views[ax_i],
+            # colorbar=bool(ax_i % 4 == 3),
+            symmetric_cbar=True,
+            colorbar=False,
+            threshold=1e-4,
+            bg_map=bgs[ax_i],
+            cmap=surf_cmap,
+            bg_on_data=True,
+            # darkness=1,
+            darkness=0.7,
+            vmax=max_value,
+            axes=ax,
+        )
+
+        # plot_surf_contours(
+        #    hemis_def[ax_i],
+        #    texture,
+        #    hemi=hemis[ax_i],
+        #    view=views[ax_i],
+        #    levels=[0],
+        #    colors=[contour_color],
+        #    axes=ax,
+        # )
 
     return fig, axes
