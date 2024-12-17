@@ -961,6 +961,8 @@ def plot_bicommunity(
     edge_alpha=0.05,
     draw_arrows=False,
     cmap=None,
+    s=80,
+    s_scale=5 / 8,
 ):
     if fig is None:
         fig, axes = plt.subplots(figsize=(10, 10))
@@ -990,7 +992,7 @@ def plot_bicommunity(
     axes.scatter(
         node_pos[0, is_in_none],
         node_pos[1, is_in_none],
-        s=50,
+        s=s * s_scale,
         c="tab:gray",
         edgecolor="k",
         linewidth=lw / 2,
@@ -999,7 +1001,7 @@ def plot_bicommunity(
     axes.scatter(
         node_pos[0, send_only],
         node_pos[1, send_only],
-        s=80,
+        s=s,
         c=send_com[send_only],
         # cmap="RdBu_r",
         cmap=cmap,
@@ -1013,7 +1015,7 @@ def plot_bicommunity(
     axes.scatter(
         node_pos[0, receive_only],
         node_pos[1, receive_only],
-        s=80,
+        s=s,
         c=-receive_com[receive_only],
         # cmap="RdBu_r",
         cmap=cmap,
@@ -1027,7 +1029,7 @@ def plot_bicommunity(
     axes.scatter(
         node_pos[0, is_in_both],
         node_pos[1, is_in_both],
-        s=80,
+        s=s,
         c=send_com[is_in_both] - receive_com[is_in_both],
         cmap=cmap,
         # c="w",
@@ -1116,6 +1118,7 @@ def plot_all_bicommunity(
     draw_legend=True,
     legend_on_ax=False,
     cmap=None,
+    gspec_wspace=0,
     **kwargs,
 ):
 
@@ -1124,7 +1127,7 @@ def plot_all_bicommunity(
         ncols=len(send_com) // nrows + (len(send_com) % nrows),
         # ncols=len(send_com) // nrows,
         subplot_spec=axes,
-        wspace=0,
+        wspace=gspec_wspace,
         hspace=0.05,
     )
     # axes.set_visible(False)
