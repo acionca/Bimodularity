@@ -59,6 +59,49 @@ def add_cbar(fig: Figure, ax: Axes, **kwargs) -> Axes:
     return fig, ax
 
 
+def draw_self_loop(
+    axes: Axes,
+    posx: float,
+    posy: float,
+    size: float,
+    rad: float = 0.4,
+    offset: float = 0.01,
+    mutation_scale: int = 20,
+    onearrow: bool = True,
+) -> Axes:
+
+    all_arrows_pos = [
+        (posx, posy, posx + size, posy, rad),
+        (posx + size - offset, posy - offset, posx + size - offset, posy + size, rad),
+        (posx + size, posy + size - offset, posx, posy + size - offset, rad),
+        (posx + offset, posy + size, posx + offset, posy - offset, rad),
+    ]
+
+    for pos_i, arr_pos in enumerate(all_arrows_pos):
+        px, py, sx, sy, rad = arr_pos
+
+        style = "-"
+        if onearrow:
+            if pos_i == len(all_arrows_pos) - 1:
+                style = "-|>"
+        elif pos_i % 2:
+            style = "-|>"
+
+        arrow = FancyArrowPatch(
+            (px, py),
+            (sx, sy),
+            arrowstyle=style,
+            mutation_scale=mutation_scale,
+            linewidth=2,
+            color="k",
+            connectionstyle=f"arc3,rad={rad}",
+        )
+
+        axes.add_patch(arrow)
+
+    return axes
+
+
 def plot_community_scheme(
     ax: Optional[Axes] = None,
     use_cmap: bool = True,
@@ -68,6 +111,8 @@ def plot_community_scheme(
     x_names: [str, str] = ["Sending 1", "Sending 2"],
     y_names: [str, str] = ["Receiving 1", "Receiving 2"],
     arrow_colors: Optional[np.ndarray] = None,
+    plot_cycle: bool = False,
+    override_title: Optional[str] = None,
 ) -> Optional[Axes]:
     # First plot (A)
     xy_pos = np.array([[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]])
@@ -113,6 +158,10 @@ def plot_community_scheme(
         (0.2, -0.3),
     ]
 
+    if plot_cycle:
+        starting_points = starting_points[:-2]
+        ending_points = ending_points[:-2]
+
     if arrow_colors is None:
         arrow_colors = ["black"] * len(starting_points)
 
@@ -149,7 +198,11 @@ def plot_community_scheme(
         fontsize=22 * fontscale,
         fontdict={"fontweight": "bold"},
     )
-    ax.set_title("Community structure scheme", fontsize=20 * fontscale)
+
+    if override_title is None:
+        override_title = "Community structure scheme"
+    ax.set_title(override_title, fontsize=20 * fontscale)
+
     ax.set_xticks(
         np.linspace(-0.5, 0.5, 2),
         labels=x_names,
@@ -239,6 +292,7 @@ def plot_spectrum(
     fontscale: float = 1.2,
     title_letter: str = "",
     override_title: Optional[str] = None,
+    normalize_s: bool = False,
     **kwargs,
 ) -> Axes:
 
@@ -249,6 +303,7 @@ def plot_spectrum(
     V = Vh.T
 
     r_squared = S[vector_id] ** 2 / (S**2).sum()
+    print(f"s (norm) = {S[vector_id] / (2 * matrix.sum())}")
     print(f"R^2 = {r_squared}")
 
     n_nodes = matrix.shape[0]
@@ -292,6 +347,9 @@ def plot_spectrum(
         for _, s in ax.spines.items():
             s.set_visible(False)
 
+    if normalize_s:
+        S = S / (2 * matrix.sum())
+
     # axes[0].plot(S, marker="o", lw=4, ms=10, color="k")
     axes[0].plot(S, marker="o", lw=4, ms=20, markeredgewidth=1, color="k")
 
@@ -313,22 +371,22 @@ def plot_spectrum(
 
     x_id = np.arange(n_nodes)[vector_id]
     if (vector_id >= 0) and (vector_id < show_n_eig):
-        axes[0].plot(
-            x_id,
-            S[vector_id],
-            marker="s",
-            lw=4,
-            ms=20,
-            # color=PALETTE[0],
-            color=node_colors[vector_id],
-            markeredgecolor="k",
-            markeredgewidth=4,
-        )
         if write_s:
+            axes[0].plot(
+                x_id,
+                S[vector_id],
+                marker="s",
+                lw=4,
+                ms=22,
+                # color=PALETTE[0],
+                color=node_colors[vector_id],
+                markeredgecolor="k",
+                markeredgewidth=4,
+            )
             axes[0].text(
                 x_id + 1,
                 S[vector_id],
-                f"$\\sigma_{{{x_id}}}={S[vector_id]:2.2f}, R^2={r_squared:1.2f}$",
+                f"$\\mu_{{{x_id+1}}}={S[vector_id]:2.2f}, R^2={r_squared:1.2f}$",
                 # f"$s_{{{x_id}}}={S[vector_id]:2.2f}, R^2={r_squared:1.2f}$",
                 fontsize=18 * fontscale,
                 ha="left",
@@ -363,6 +421,9 @@ def plot_spectrum(
         axes[1].plot(
             [len(S) - show_n_eig, len(S) + 2], [0] * 2, color="k", ls="--", alpha=0.8
         )
+    else:
+        # ax.set_ylim(S[:show_n_eig].min() - 1, S[:show_n_eig].max() + 1)
+        ax.set_ylim(0.9 * S[:show_n_eig].min(), 1.1 * S[:show_n_eig].max())
 
     # From matplotlib examples
     d = 0.5  # proportion of vertical to horizontal extent of the slanted line
@@ -375,9 +436,8 @@ def plot_spectrum(
         clip_on=False,
     )
 
-    axes[0].plot([1], [0], transform=axes[0].transAxes, **kwargs)
-
     if split_ax:
+        axes[0].plot([1], [0], transform=axes[0].transAxes, **kwargs)
         axes[1].plot([0], [0], transform=axes[1].transAxes, **kwargs)
 
     # Parameters
@@ -393,13 +453,13 @@ def plot_spectrum(
 
     axes[0].set_xlim(-2, show_n_eig - 0.5)
 
+    n_ticks = show_n_eig // 3
+    axes[0].set_xticks(
+        np.arange(0, show_n_eig, n_ticks), labels=np.arange(0, show_n_eig, n_ticks) + 1
+    )
+
     if split_ax:
         axes[1].set_xlim(len(S) - show_n_eig + 0.5, len(S) + 2)
-
-    n_ticks = show_n_eig // 2
-    axes[0].set_xticks(np.arange(0, show_n_eig, n_ticks))
-
-    if split_ax:
         axes[1].set_xticks(
             np.arange(len(S) - show_n_eig + n_ticks, len(S) + 2, n_ticks)
         )
@@ -409,12 +469,13 @@ def plot_spectrum(
     if split_ax:
         axes[1].spines.left.set_visible(False)
 
-    ax.set_xlabel("Indices $i$", fontsize=18 * fontscale)
-    axes[0].set_ylabel("Singular values $\\sigma_i$", fontsize=18 * fontscale)
+    ax.set_xlabel("Indices $n$", fontsize=18 * fontscale)
+    axes[0].set_ylabel("Singular Values $\\mu_n$", fontsize=18 * fontscale)
     # axes[0].set_ylabel("Singular values $s_i$", fontsize=18 * fontscale)
 
     for ax in axes[:2]:
         ax.spines[["top", "right"]].set_visible(False)
+        ax.spines[:].set_linewidth(2)
 
         # ax.set_xticks(np.linspace(-.1, .1, 3), labels=np.linspace(-.1, .1, 3), fontsize=18*fontscale)
         # ax.set_yticks(np.linspace(-.1, .1, 3), labels=np.linspace(-.1, .1, 3), fontsize=18*fontscale)
@@ -425,6 +486,7 @@ def plot_spectrum(
         labelleft=True,
         labelbottom=True,
         labelsize=16 * fontscale,
+        width=2,
     )
 
     if split_ax:
@@ -445,6 +507,7 @@ def plot_graph_embedding(
     n_com: int = 4,
     ax: Optional[Axes] = None,
     use_cmap: bool = True,
+    cmap: str = "plasma",
     write_label: bool = False,
     write_var: bool = False,
     label_lw: int = 3,
@@ -484,8 +547,11 @@ def plot_graph_embedding(
             palette_rgb = [to_rgb(color) for color in PALETTE]
             colors = [palette_rgb[i // n_per_com] for i in np.arange(n_nodes)]
         else:
-            cmap = plt.get_cmap("plasma", int(node_clusers.max() + 1))
-            colors = [cmap(int(i)) for i in node_clusers]
+            try:
+                cmap = plt.get_cmap(cmap, int(node_clusers.max() + 1))
+                colors = [cmap(int(i)) for i in node_clusers]
+            except ValueError:
+                colors = [cmap] * n_nodes
     else:
         colors = "tab:blue"
 
@@ -510,44 +576,34 @@ def plot_graph_embedding(
         )
 
     if write_label:
-        if not use_cmap:
-            print(
-                "Labels are only available when using the custom colormap"
-                + " `use_cmap=True`"
+        for com_i in range(n_com):
+            mean_u = np.mean(U[com_i * n_per_com : (com_i + 1) * n_per_com, vector_id])
+            mean_v = np.mean(V[com_i * n_per_com : (com_i + 1) * n_per_com, vector_id])
+            ax.text(
+                mean_u,
+                mean_v,
+                f"$S_{com_i+1}$",
+                fontsize=26 * fontscale,
+                color="k",
+                # color="w",
+                # color=PALETTE[com_i],
+                fontweight="bold",
+                path_effects=[
+                    withStroke(
+                        linewidth=label_lw,
+                        foreground="w",
+                        alpha=0.8,
+                        # foreground="k",
+                        # foreground=PALETTE[com_i],
+                    )
+                ],
+                ha="center",
+                va="center",
+                zorder=4,
             )
-        else:
-            for com_i in range(n_com):
-                mean_u = np.mean(
-                    U[com_i * n_per_com : (com_i + 1) * n_per_com, vector_id]
-                )
-                mean_v = np.mean(
-                    V[com_i * n_per_com : (com_i + 1) * n_per_com, vector_id]
-                )
-                ax.text(
-                    mean_u,
-                    mean_v,
-                    f"$S_{com_i+1}$",
-                    fontsize=26 * fontscale,
-                    color="k",
-                    # color="w",
-                    # color=PALETTE[com_i],
-                    fontweight="bold",
-                    path_effects=[
-                        withStroke(
-                            linewidth=label_lw,
-                            foreground="w",
-                            alpha=0.8,
-                            # foreground="k",
-                            # foreground=PALETTE[com_i],
-                        )
-                    ],
-                    ha="center",
-                    va="center",
-                    zorder=4,
-                )
-                # ax.scatter(
-                #    mean_u, mean_v, s=1000, marker="o", color="w", alpha=0.8, zorder=3
-                # )
+            # ax.scatter(
+            #    mean_u, mean_v, s=1000, marker="o", color="w", alpha=0.8, zorder=3
+            # )
 
     # Parameters
     ax.set_title(
@@ -557,7 +613,7 @@ def plot_graph_embedding(
         fontdict={"fontweight": "bold"},
     )
     if override_title is None:
-        override_title = "Singular vector embedding"
+        override_title = f"Bimodularity Embedding $(n={{{vector_id+1}}})$"
     ax.set_title(override_title, fontsize=20 * fontscale)
     ax.tick_params(
         left=True,
@@ -565,8 +621,10 @@ def plot_graph_embedding(
         labelleft=True,
         labelbottom=True,
         labelsize=16 * fontscale,
+        width=2,
     )
     ax.spines[["top", "right"]].set_visible(False)
+    ax.spines[:].set_linewidth(2)
 
     ax.set_xticks(
         np.linspace(-0.1, 0.1, 3),
@@ -579,7 +637,13 @@ def plot_graph_embedding(
         fontsize=18 * fontscale,
     )
 
-    ax.set_xlabel(f"Left singular vector $u_{{{vector_id}}}$", fontsize=18 * fontscale)
-    ax.set_ylabel(f"Right singular vector $v_{{{vector_id}}}$", fontsize=18 * fontscale)
+    ax.set_xlabel(
+        f"Left Singular Vector $\\mathbf{{u}}_{{{vector_id+1}}}$",
+        fontsize=18 * fontscale,
+    )
+    ax.set_ylabel(
+        f"Right Singular Vector $\\mathbf{{v}}_{{{vector_id+1}}}$",
+        fontsize=18 * fontscale,
+    )
 
     return ax

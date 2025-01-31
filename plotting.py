@@ -1,11 +1,36 @@
 from typing import Optional
+from matplotlib.gridspec import GridSpecFromSubplotSpec
+from matplotlib.colors import to_rgb
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-import networkx as nx
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
 
-from dgsp import configuration_null, modularity_matrix, modularity_quadratic, sorted_SVD
+import networkx as nx
+import nibabel as nib
+from nilearn import datasets
+from nilearn.surface import vol_to_surf
+from nilearn.plotting import plot_surf_stat_map, plot_surf_contours
+
+from skimage.segmentation import expand_labels
+
+# from dgsp import configuration_null, modularity_matrix, modularity_quadratic, sorted_SVD
+from dgsp import (
+    configuration_null,
+    modularity_matrix,
+    modularity_quadratic,
+    sorted_SVD,
+    bimod_index_edges,
+    bimod_index_nodes,
+    bimod_index_quad,
+)
+
+# Red, Blue, Green, Purple
+PALETTE = ["#FFADAD", "#A0C4FF", "#CAFFBF", "#FFC6FF"]
+PALETTE_RGB = [to_rgb(c) for c in PALETTE]
+EDGE_PALETTE = np.array(["tab:red", "tab:blue", "tab:green", "tab:gray"])
 
 
 def community_pos(n_nodes, seed=123, n_nodes_per_com=None):
@@ -902,3 +927,852 @@ def add_cbar(fig, ax, **kwargs):
     cax = divider.append_axes("right", size="5%", pad=0.05)
     fig.colorbar(ax.get_children()[0], cax=cax, orientation="vertical", **kwargs)
     return fig, ax
+
+
+def plot_bicommunity_lines(send_com, receive_com, axes=None):
+
+    n_clusters = send_com.shape[0]
+
+    cmap = plt.get_cmap("tab20")
+
+    for i in np.arange(1, n_clusters + 1):
+        axes.plot(0.9 * send_com[i - 1].T + i, lw=2, color=cmap(i))
+        axes.plot(0.9 * receive_com[i - 1].T + i, lw=2, ls="--", color=cmap(i))
+
+    axes.set_yticks(
+        np.arange(1, n_clusters + 1) + 0.4,
+        labels=[f"$C_{{{i}}}$" for i in np.arange(1, n_clusters + 1)],
+        fontsize=15,
+    )
+    axes.set_ylabel("Node cluster probabilities", fontsize=15)
+    axes.set_xlabel("Nodes", fontsize=15)
+
+    return axes
+
+
+def plot_bicommunity(
+    adjacency,
+    send_com,
+    receive_com,
+    fig=None,
+    axes=None,
+    graph_pos=None,
+    lw=1,
+    edge_alpha=0.05,
+    draw_arrows=False,
+    cmap=None,
+    s=80,
+    s_scale=5 / 8,
+):
+    if fig is None:
+        fig, axes = plt.subplots(figsize=(10, 10))
+
+    if graph_pos is None:
+        graph_pos = nx.spring_layout(nx.DiGraph(adjacency))
+
+    node_pos = np.array(list(graph_pos.values())).T
+
+    if draw_arrows:
+        nx.draw_networkx_edges(
+            nx.DiGraph(adjacency), pos=graph_pos, alpha=edge_alpha, ax=axes
+        )
+    else:
+        nx.draw_networkx_edges(
+            nx.Graph(adjacency), pos=graph_pos, alpha=edge_alpha, ax=axes
+        )
+
+    is_in_none = np.logical_and(send_com == 0, receive_com == 0)
+    is_in_both = np.logical_and(send_com > 0, receive_com > 0)
+    send_only = np.logical_and(send_com > 0, receive_com == 0)
+    receive_only = np.logical_and(send_com == 0, receive_com > 0)
+
+    if cmap is None:
+        cmap = "RdBu_r"
+
+    axes.scatter(
+        node_pos[0, is_in_none],
+        node_pos[1, is_in_none],
+        s=s * s_scale,
+        c="tab:gray",
+        edgecolor="k",
+        linewidth=lw / 2,
+        zorder=2,
+    )
+    axes.scatter(
+        node_pos[0, send_only],
+        node_pos[1, send_only],
+        s=s,
+        c=send_com[send_only],
+        # cmap="RdBu_r",
+        cmap=cmap,
+        edgecolor="k",
+        marker="s",
+        linewidth=lw,
+        zorder=2,
+        vmin=-1,
+        vmax=1,
+    )
+    axes.scatter(
+        node_pos[0, receive_only],
+        node_pos[1, receive_only],
+        s=s,
+        c=-receive_com[receive_only],
+        # cmap="RdBu_r",
+        cmap=cmap,
+        edgecolor="k",
+        marker="D",
+        linewidth=lw,
+        zorder=2,
+        vmin=-1,
+        vmax=1,
+    )
+    axes.scatter(
+        node_pos[0, is_in_both],
+        node_pos[1, is_in_both],
+        s=s,
+        c=send_com[is_in_both] - receive_com[is_in_both],
+        cmap=cmap,
+        # c="w",
+        edgecolor="k",
+        marker="o",
+        linewidth=lw,
+        zorder=2,
+        vmin=-1,
+        vmax=1,
+    )
+
+    return fig, axes
+
+
+def plot_bimod_indices(
+    bimod,
+    fig=None,
+    axes=None,
+    sum_power=2,
+    offset=0,
+    title="",
+    width=0.4,
+    color=None,
+):
+    if axes is None:
+        fig, axes = plt.subplots(figsize=(20, 10))
+
+    if color is None:
+        color = PALETTE[0]
+
+    com_gs = GridSpecFromSubplotSpec(nrows=1, ncols=2, subplot_spec=axes)
+    axes.set_visible(False)
+
+    com_axes = [fig.add_subplot(gs) for gs in com_gs]
+
+    sort_i = np.flip(np.argsort(bimod))
+
+    com_axes[0].bar(
+        np.arange(len(sort_i)) + offset,
+        bimod[sort_i],
+        label=title,
+        width=width,
+        color=color,
+        linewidth=2,
+        edgecolor="tab:blue",
+    )
+
+    com_axes[0].axhline(0, color="k", zorder=0, lw=2)
+
+    c_labels = [f"$C_{{{i+1}}}$" for i in sort_i]
+    com_axes[0].set_ylabel("Contribution to bimodularity", fontsize=20)
+    com_axes[0].set_xticks(np.arange(len(bimod)), labels=c_labels)
+    com_axes[0].tick_params(labelsize=18)
+
+    bimod = bimod**sum_power / np.sum(bimod**sum_power)
+
+    com_axes[1].plot(
+        np.cumsum(bimod[sort_i]),
+        lw=4,
+        marker="o",
+        markersize=10,
+        color=color,
+        label=title,
+    )
+
+    com_axes[1].axhline(1, color="k", ls=":", zorder=0, lw=2, alpha=0.5)
+
+    com_axes[1].set_ylim(0, 1.1)
+    com_axes[1].set_ylabel("Cumulative bimodularity", fontsize=20)
+    com_axes[1].set_xticks(np.arange(len(bimod)), labels=c_labels)
+    com_axes[1].tick_params(labelsize=18)
+
+    return fig, axes
+
+
+def plot_all_bicommunity(
+    adjacency,
+    send_com,
+    receive_com,
+    fig=None,
+    axes=None,
+    layout="embedding",
+    scatter_only=False,
+    titles=None,
+    nrows=1,
+    draw_legend=True,
+    legend_on_ax=False,
+    cmap=None,
+    gspec_wspace=0,
+    gspec_hspace=0.05,
+    **kwargs,
+):
+
+    com_gs = GridSpecFromSubplotSpec(
+        nrows=nrows,
+        ncols=len(send_com) // nrows + (len(send_com) % nrows),
+        # ncols=len(send_com) // nrows,
+        subplot_spec=axes,
+        wspace=gspec_wspace,
+        hspace=gspec_hspace,
+    )
+    # axes.set_visible(False)
+    axes.axis("off")
+    com_axes = [fig.add_subplot(gs) for gs in com_gs]
+
+    if isinstance(layout, dict):
+        graph_pos = layout.copy()
+    elif layout == "embedding":
+        U, _, Vh = sorted_SVD(modularity_matrix(adjacency))
+        V = Vh.T
+
+        graph_pos = {i: (U[i, 0], V[i, 0]) for i, _ in enumerate(adjacency)}
+    else:
+        graph_pos = nx.spring_layout(nx.DiGraph(adjacency))
+
+    if titles is None:
+        titles = [f"Com {i+1}" for i in range(len(send_com))]
+
+    for i, title in enumerate(titles):
+        com_axes[i].set_title(title, fontsize=20)
+
+    if cmap is None:
+        cmap = plt.get_cmap("RdBu")
+    elif isinstance(cmap, str):
+        cmap = plt.get_cmap(cmap, 5)
+
+    for i, (send, receive) in enumerate(zip(send_com, receive_com)):
+
+        com_axes[i].set_facecolor("none")
+
+        if scatter_only:
+            com_axes[i].scatter(send, receive)
+        else:
+            plot_bicommunity(
+                adjacency,
+                send,
+                receive,
+                fig=fig,
+                axes=com_axes[i],
+                graph_pos=graph_pos,
+                cmap=cmap,
+                **kwargs,
+            )
+
+        com_axes[i].spines[:].set_visible(False)
+    com_axes[-1].spines[:].set_visible(False)
+    com_axes[-1].tick_params(
+        left=False, bottom=False, labelleft=False, labelbottom=False
+    )
+
+    leg_titles = ["Send", "Both", "Receive"]
+    markers = ["s", "o", "D"]
+
+    colors = [cmap(i) for i in range(3)]
+    custom_legend = [
+        Line2D(
+            [0],
+            [0],
+            color="w",
+            marker=markers[i],
+            markeredgecolor="k",
+            markerfacecolor=cmap(1 + i),
+            markersize=10,
+        )
+        for i, _ in enumerate(leg_titles)
+    ]
+
+    if draw_legend:
+        if legend_on_ax:
+            axes.legend(
+                custom_legend,
+                leg_titles,
+                loc="lower center",
+                ncol=3,
+                fontsize=20,
+                bbox_to_anchor=(0.5, -0.12),
+            )
+        else:
+            fig.legend(
+                custom_legend, leg_titles, loc="lower center", ncol=3, fontsize=20
+            )
+
+    return fig, axes
+
+
+def plot_all_bimod_indices(
+    graph,
+    edge_clusters_mat=None,
+    sending_communities=None,
+    receiving_communities=None,
+    fig=None,
+    axes=None,
+    sum_power=2,
+    palette=None,
+    sort_by_quad=False,
+    scale_indices=False,
+):
+    if axes is None:
+        fig, axes = plt.subplots(figsize=(20, 10))
+
+    if palette is None:
+        palette = EDGE_PALETTE
+
+    com_gs = GridSpecFromSubplotSpec(nrows=1, ncols=2, subplot_spec=axes)
+    axes.set_visible(False)
+
+    com_axes = [fig.add_subplot(gs) for gs in com_gs]
+
+    bimod = bimod_index_edges(graph, edge_clusters_mat, scale=scale_indices)
+    bimod_node = bimod_index_nodes(
+        graph, sending_communities, receiving_communities, scale=scale_indices
+    )
+    bimod_quad = bimod_index_quad(
+        graph, sending_communities, receiving_communities, scale=scale_indices
+    )
+
+    if sort_by_quad:
+        sort_i = np.flip(np.argsort(bimod_quad))
+    else:
+        sort_i = np.flip(np.argsort(bimod_node))
+
+    bar_offset = 0.2
+    for data, title, off, col in zip(
+        [bimod, bimod_node, bimod_quad],
+        ["$Q_{{bi}}$ edges", "$Q_{{bi}}$ nodes", "$Q_{{bi}}$ quad"],
+        [-bar_offset, 0, bar_offset],
+        palette,
+    ):
+        com_axes[0].bar(
+            np.arange(len(sort_i)) + off,
+            # data[sort_i] / np.sum(data[sort_i]),
+            data[sort_i],
+            label=title,
+            width=bar_offset,
+            color=col,
+        )
+
+    c_labels = [f"$C_{{{i+1}}}$" for i in sort_i]
+    com_axes[0].legend(fontsize=20)
+    com_axes[0].set_ylabel("Contribution to bimodularity", fontsize=20)
+    com_axes[0].set_xticks(np.arange(len(bimod)), labels=c_labels)
+    com_axes[0].tick_params(labelsize=18)
+
+    bimod = bimod**sum_power / np.sum(bimod**sum_power)
+    bimod_node = bimod_node**sum_power / np.sum(bimod_node**sum_power)
+    bimod_quad = bimod_quad**sum_power / np.sum(bimod_quad**sum_power)
+
+    for data, title, col in zip(
+        [bimod, bimod_node, bimod_quad],
+        ["$Q_{{bi}}$ edges", "$Q_{{bi}}$ nodes", "$Q_{{bi}}$ quad"],
+        palette,
+    ):
+        com_axes[1].plot(
+            np.cumsum(data[sort_i]),
+            lw=4,
+            marker="o",
+            markersize=10,
+            color=col,
+            label=title,
+        )
+
+    com_axes[1].axhline(1, color="k", ls=":", zorder=0, lw=2, alpha=0.5)
+
+    com_axes[1].legend(fontsize=20)
+    com_axes[1].set_ylim(0, 1.1)
+    com_axes[1].set_ylabel("Cumulative bimodularity", fontsize=20)
+    com_axes[1].set_xticks(np.arange(len(bimod)), labels=c_labels)
+    com_axes[1].tick_params(labelsize=18)
+
+    return fig, axes
+
+
+def plot_bicommunity_types(
+    sending_communities,
+    receiving_communities,
+    types,
+    type_colors=None,
+    titles=None,
+    fontsize=14,
+    fig=None,
+    axes=None,
+):
+
+    if type_colors is None:
+        cmap = plt.get_cmap("Set1")
+        type_colors = {t: cmap(i) for i, t in enumerate(types.unique())}
+
+    if titles is None:
+        titles = [f"Community {com_i+1}" for com_i in range(len(sending_communities))]
+
+    if axes is None:
+        fig, axes = plt.subplots(figsize=(5 * len(sending_communities), 5))
+
+    types_series = pd.Series(types)
+    # print(types_series)
+
+    for com_i, (s, r) in enumerate(zip(sending_communities, receiving_communities)):
+        types_send = types_series[s > 0].value_counts()
+        types_receive = types_series[r > 0].value_counts()
+
+        # print(types_send, types_receive)
+
+        axes[com_i].set_visible(False)
+        gs_com = GridSpecFromSubplotSpec(
+            2, 1, subplot_spec=axes[com_i], hspace=0.05, wspace=0
+        )
+        axes_com = [fig.add_subplot(gs_com[i]) for i in range(2)]
+
+        # axes_com[0].set_title(f"Community {com_i+1}", fontsize=20)
+        # axes_com[0].set_title(titles[com_i], fontsize=20)
+
+        # axes_com[0].set_title("Sending", fontsize=14)
+        # axes_com[1].set_title("Receiving", fontsize=14)
+
+        # axes_com[0].set_ylabel("Sending\n", fontsize=fontsize + 2, labelpad=-30)
+        # axes_com[1].set_ylabel("Receiving\n", fontsize=fontsize + 2, labelpad=-30)
+
+        axes_com[0].set_ylabel("Sending\n", fontsize=fontsize + 2, labelpad=0)
+        axes_com[1].set_ylabel("Receiving\n", fontsize=fontsize + 2, labelpad=0)
+
+        axes_com[0].yaxis.set_label_position("right")
+        axes_com[1].yaxis.set_label_position("right")
+
+        axes_com[0].pie(
+            types_send,
+            colors=[type_colors[t] for t in types_send.index],
+            labels=types_send.index,
+            labeldistance=0.6,
+            # rotatelabels=True,
+            wedgeprops={"edgecolor": "w", "linewidth": 2},
+            textprops={"fontsize": fontsize, "ha": "center"},
+            # textprops={"size": "smaller"},
+        )
+        axes_com[1].pie(
+            types_receive,
+            colors=[type_colors[t] for t in types_receive.index],
+            labels=types_receive.index,
+            labeldistance=0.6,
+            # rotatelabels=True,
+            wedgeprops={"edgecolor": "w", "linewidth": 2},
+            textprops={"fontsize": fontsize, "ha": "center"},
+            # textprops={"size": "smaller"},
+        )
+
+    return axes
+
+
+def get_node_surface(node_signal, path_to_atlas, expand=0):
+
+    roi_atlas = nib.load(path_to_atlas)
+    atlas_data = roi_atlas.get_fdata()
+
+    atlas_data = expand_labels(atlas_data, distance=expand)
+
+    n_roi = len(np.unique(atlas_data)) - 1
+
+    if not isinstance(node_signal, list):
+        signals = [node_signal]
+    else:
+        signals = node_signal.copy()
+
+    surf_map = np.zeros(
+        (len(signals), atlas_data.shape[0], atlas_data.shape[1], atlas_data.shape[2]),
+        dtype=float,
+    )
+
+    for i in range(n_roi):
+        for sig_i, sig in enumerate(signals):
+            surf_map[sig_i][atlas_data == i + 1] = sig[i]
+
+    all_maps = [
+        nib.Nifti1Image(s_map, roi_atlas.affine, dtype=np.float32) for s_map in surf_map
+    ]
+    # surf_map.header.set_data_dtype(np.float32)
+
+    return all_maps
+
+
+def plot_node_surface(
+    surf_map,
+    contours=[],
+    contour_colors=["red", "blue"],
+    surf_cmap="RdBu_r",
+    surface_name="fsaverage5",
+    inflate=True,
+    fig=None,
+    axes=None,
+    max_value=1,
+    per_hemi=True,
+    figsize=(20, 5),
+    plot_cbar=False,
+    cbar_h=1,
+):
+
+    fsaverage = datasets.fetch_surf_fsaverage(surface_name)
+
+    # max_value = 0.9 * np.abs(node_signal).max()  # 0.5
+
+    if axes is None:
+        fig, axes = plt.subplots(
+            ncols=4,
+            nrows=1,
+            figsize=figsize,
+            subplot_kw={"projection": "3d"},
+            gridspec_kw={"wspace": 0, "hspace": 0},
+        )
+
+    if plot_cbar:
+
+        x_pos = []
+        y_pos = []
+        sizes = []
+        for ax in axes:
+            x_pos.append(ax.get_position().bounds[0])
+            y_pos.append(ax.get_position().bounds[1])
+            sizes.append(ax.get_position().bounds[2])
+
+        # cmap_ax = fig.add_axes([0.1, 0.5, 0.8, 0.05])
+        # cmap_ax = fig.add_axes([0.2, 0.5, 0.6, 0.025])
+        ax_pos = [
+            np.mean(x_pos),
+            np.mean(y_pos) + np.mean(sizes) / 2,
+            np.mean(sizes),
+            cbar_h * np.mean(sizes) / 10,
+        ]
+        cmap_ax = fig.add_axes(ax_pos)
+
+        norm = Normalize(vmin=-max_value, vmax=max_value)
+        cbar = fig.colorbar(
+            ScalarMappable(norm=norm, cmap=surf_cmap),
+            cax=cmap_ax,
+            orientation="horizontal",
+            ticks=np.linspace(-max_value, max_value, 5),
+        )
+        cbar.ax.tick_params(labelsize=18)
+
+    # fig.suptitle(f"$Q(C_{{{i+1}}})={bimod[com_id]:1.2f}$")
+
+    hemis = ["left", "right"]
+    surf_def = [fsaverage.pial_left, fsaverage.pial_right]
+    if inflate:
+        hemis_def = [fsaverage.infl_left, fsaverage.infl_right]
+    else:
+        hemis_def = [fsaverage.pial_left, fsaverage.pial_right]
+    bgs = [fsaverage.sulc_left, fsaverage.sulc_right]
+
+    views = ["lateral", "medial"]
+
+    if per_hemi:
+        # left - right
+        view_order = [0, 1, 1, 0]
+        hemi_order = [0, 0, 1, 1]
+    else:
+        # lateral - medial
+        view_order = [0, 0, 1, 1]
+        hemi_order = [0, 1, 0, 1]
+
+    for ax_i, ax in enumerate(axes):
+
+        texture = vol_to_surf(
+            surf_map,
+            # surf_def[ax_i % 2],
+            surf_def[hemi_order[ax_i]],
+            interpolation="nearest",
+            radius=0.0,
+            n_samples=1,
+        )
+        figure = plot_surf_stat_map(
+            # hemis_def[ax_i % 2],
+            hemis_def[hemi_order[ax_i]],
+            texture,
+            # hemi=hemis[ax_i % 2],
+            # view=views[ax_i // 2],
+            hemi=hemis[hemi_order[ax_i]],
+            view=views[view_order[ax_i]],
+            # colorbar=bool(ax_i % 4 == 3),
+            symmetric_cbar=True,
+            colorbar=False,
+            threshold=1e-4,
+            # bg_map=bgs[ax_i % 2],
+            bg_map=bgs[hemi_order[ax_i]],
+            cmap=surf_cmap,
+            bg_on_data=True,
+            darkness=1,
+            vmax=max_value,
+            axes=ax,
+        )
+
+        for contour, cont_c in zip(contours, contour_colors):
+            texture = vol_to_surf(
+                contour,
+                # surf_def[ax_i % 2],
+                surf_def[hemi_order[ax_i]],
+                interpolation="nearest",
+                radius=0.0,
+                n_samples=1,
+            )
+            plot_surf_contours(
+                # hemis_def[ax_i % 2],
+                hemis_def[hemi_order[ax_i]],
+                texture,
+                # hemi=hemis[ax_i % 2],
+                # view=views[ax_i // 2],
+                hemi=hemis[hemi_order[ax_i]],
+                view=views[view_order[ax_i]],
+                levels=[0],
+                colors=[cont_c],
+                axes=ax,
+            )
+
+    return fig, axes
+
+
+def plot_send_receive_surface(
+    surf_map,
+    contour_color,
+    surf_cmap="RdBu_r",
+    surface_name="fsaverage5",
+    inflate=True,
+    fig=None,
+    axes=None,
+    max_value=1,
+    per_hemi=True,
+    view_top=False,
+    figsize=(20, 5),
+    plot_cbar=False,
+    cbar_h=1,
+):
+
+    fsaverage = datasets.fetch_surf_fsaverage(surface_name)
+
+    # max_value = 0.9 * np.abs(node_signal).max()  # 0.5
+
+    if axes is None:
+        fig, axes = plt.subplots(
+            ncols=4 + 1 * view_top,
+            nrows=1,
+            figsize=figsize,
+            subplot_kw={"projection": "3d"},
+            gridspec_kw={"wspace": 0, "hspace": 0},
+        )
+
+    if plot_cbar:
+
+        x_pos = []
+        y_pos = []
+        sizes = []
+        for ax in axes:
+            x_pos.append(ax.get_position().bounds[0])
+            y_pos.append(ax.get_position().bounds[1])
+            sizes.append(ax.get_position().bounds[2])
+
+        # cmap_ax = fig.add_axes([0.1, 0.5, 0.8, 0.05])
+        # cmap_ax = fig.add_axes([0.2, 0.5, 0.6, 0.025])
+        ax_pos = [
+            np.mean(x_pos) - np.mean(sizes) / 2,
+            np.mean(y_pos),
+            2 * np.mean(sizes),
+            cbar_h * np.mean(sizes) / 10,
+        ]
+        cmap_ax = fig.add_axes(ax_pos)
+
+        norm = Normalize(vmin=-max_value, vmax=max_value)
+        cbar = fig.colorbar(
+            ScalarMappable(norm=norm, cmap=surf_cmap),
+            cax=cmap_ax,
+            orientation="horizontal",
+            ticks=np.linspace(-max_value, max_value, 5),
+        )
+        cbar.ax.tick_params(labelsize=18)
+
+    # fig.suptitle(f"$Q(C_{{{i+1}}})={bimod[com_id]:1.2f}$")
+
+    hemis = ["left", "right"]
+    surf_def = [fsaverage.pial_left, fsaverage.pial_right]
+    if inflate:
+        hemis_def = [fsaverage.infl_left, fsaverage.infl_right]
+    else:
+        hemis_def = [fsaverage.pial_left, fsaverage.pial_right]
+    bgs = [fsaverage.sulc_left, fsaverage.sulc_right]
+
+    views = ["lateral", "medial", (90, -90.0)]
+
+    axes_show = axes
+    if per_hemi:
+        if view_top:
+            # left - right
+            view_order = [0, 1, 2, 2, 1, 0]
+            hemi_order = [0, 0, 0, 1, 1, 1]
+            axes_show = np.array(axes)[[0, 1, 2, 2, 3, 4]]
+        else:
+            # left - right
+            view_order = [0, 1, 1, 0]
+            hemi_order = [0, 0, 1, 1]
+    else:
+        # lateral - medial
+        view_order = [0, 0, 1, 1]
+        hemi_order = [0, 1, 0, 1]
+
+    for ax_i, ax in enumerate(axes_show):
+
+        texture = vol_to_surf(
+            surf_map,
+            surf_def[hemi_order[ax_i]],
+            interpolation="nearest",
+            radius=0.0,
+            n_samples=1,
+        )
+        figure = plot_surf_stat_map(
+            hemis_def[hemi_order[ax_i]],
+            texture,
+            hemi=hemis[hemi_order[ax_i]],
+            view=views[view_order[ax_i]],
+            # colorbar=bool(ax_i % 4 == 3),
+            symmetric_cbar=True,
+            colorbar=False,
+            threshold=1e-4,
+            bg_map=bgs[hemi_order[ax_i]],
+            cmap=surf_cmap,
+            bg_on_data=True,
+            # darkness=1,
+            darkness=0.7,
+            vmax=max_value,
+            axes=ax,
+        )
+
+        plot_surf_contours(
+            hemis_def[hemi_order[ax_i]],
+            texture,
+            hemi=hemis[hemi_order[ax_i]],
+            view=views[view_order[ax_i]],
+            levels=[0],
+            colors=[contour_color],
+            axes=ax,
+        )
+
+    return fig, axes
+
+
+def plot_send_receive_surface_top(
+    surf_map,
+    contour_color,
+    surf_cmap="RdBu_r",
+    surface_name="fsaverage5",
+    inflate=True,
+    fig=None,
+    axes=None,
+    max_value=1,
+    figsize=(20, 5),
+    plot_cbar=False,
+    cbar_h=1,
+):
+
+    fsaverage = datasets.fetch_surf_fsaverage(surface_name)
+
+    # max_value = 0.9 * np.abs(node_signal).max()  # 0.5
+
+    if axes is None:
+        fig, axes = plt.subplots(
+            figsize=figsize,
+            subplot_kw={"projection": "3d"},
+        )
+
+    ax = axes
+
+    if plot_cbar:
+
+        x_pos = ax.get_position().bounds[0]
+        y_pos = ax.get_position().bounds[1]
+        sizex = ax.get_position().bounds[2]
+        sizey = ax.get_position().bounds[3]
+
+        # cmap_ax = fig.add_axes([0.1, 0.5, 0.8, 0.05])
+        # cmap_ax = fig.add_axes([0.2, 0.5, 0.6, 0.025])
+        ax_pos = [
+            x_pos + sizex,
+            y_pos + sizey / 4,
+            # np.mean(sizes),
+            # cbar_h * np.mean(sizes) / 10,
+            cbar_h * sizex / 20,
+            sizey * 2 / 3,
+        ]
+        cmap_ax = fig.add_axes(ax_pos)
+
+        norm = Normalize(vmin=-max_value, vmax=max_value)
+        cbar = fig.colorbar(
+            ScalarMappable(norm=norm, cmap=surf_cmap),
+            cax=cmap_ax,
+            # orientation="horizontal",
+            orientation="vertical",
+            ticks=np.linspace(-max_value, max_value, 5),
+        )
+        cbar.ax.tick_params(labelsize=18)
+
+    # fig.suptitle(f"$Q(C_{{{i+1}}})={bimod[com_id]:1.2f}$")
+
+    hemis = ["left", "right"]
+    surf_def = [fsaverage.pial_left, fsaverage.pial_right]
+    if inflate:
+        hemis_def = [fsaverage.infl_left, fsaverage.infl_right]
+    else:
+        hemis_def = [fsaverage.pial_left, fsaverage.pial_right]
+    bgs = [fsaverage.sulc_left, fsaverage.sulc_right]
+
+    # views = ["lateral", "medial"]
+    # views = ["dorsal"] * 2
+    views = [(90, -90.0)] * 2
+
+    for ax_i in range(2):
+
+        texture = vol_to_surf(
+            surf_map,
+            surf_def[ax_i],
+            interpolation="nearest",
+            radius=0.0,
+            n_samples=1,
+        )
+        figure = plot_surf_stat_map(
+            hemis_def[ax_i],
+            texture,
+            hemi=hemis[ax_i],
+            view=views[ax_i],
+            # colorbar=bool(ax_i % 4 == 3),
+            symmetric_cbar=True,
+            colorbar=False,
+            threshold=1e-4,
+            bg_map=bgs[ax_i],
+            cmap=surf_cmap,
+            bg_on_data=True,
+            # darkness=1,
+            darkness=0.7,
+            vmax=max_value,
+            axes=ax,
+        )
+
+        # plot_surf_contours(
+        #    hemis_def[ax_i],
+        #    texture,
+        #    hemi=hemis[ax_i],
+        #    view=views[ax_i],
+        #    levels=[0],
+        #    colors=[contour_color],
+        #    axes=ax,
+        # )
+
+    return fig, axes
