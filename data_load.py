@@ -84,10 +84,6 @@ def load_celegans_graph(
         neuron_def_df[neuron_def_df["Neuron"] == lab]["Type_num"].values[0]
         for lab in worm_label
     ]
-    worm_landmark = [
-        neuron_def_df[neuron_def_df["Neuron"] == lab]["Landmark Position"].values[0]
-        for lab in worm_label
-    ]
 
     worm_pos = worm_dict["Worm279_positions"]
 
