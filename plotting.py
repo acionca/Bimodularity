@@ -1119,6 +1119,7 @@ def plot_all_bicommunity(
     legend_on_ax=False,
     cmap=None,
     gspec_wspace=0,
+    gspec_hspace=0.05,
     **kwargs,
 ):
 
@@ -1128,7 +1129,7 @@ def plot_all_bicommunity(
         # ncols=len(send_com) // nrows,
         subplot_spec=axes,
         wspace=gspec_wspace,
-        hspace=0.05,
+        hspace=gspec_hspace,
     )
     # axes.set_visible(False)
     axes.axis("off")
@@ -1343,8 +1344,14 @@ def plot_bicommunity_types(
         # axes_com[0].set_title("Sending", fontsize=14)
         # axes_com[1].set_title("Receiving", fontsize=14)
 
-        axes_com[0].set_ylabel("Sending\n", fontsize=fontsize + 2, labelpad=-30)
-        axes_com[1].set_ylabel("Receiving\n", fontsize=fontsize + 2, labelpad=-30)
+        # axes_com[0].set_ylabel("Sending\n", fontsize=fontsize + 2, labelpad=-30)
+        # axes_com[1].set_ylabel("Receiving\n", fontsize=fontsize + 2, labelpad=-30)
+
+        axes_com[0].set_ylabel("Sending\n", fontsize=fontsize + 2, labelpad=0)
+        axes_com[1].set_ylabel("Receiving\n", fontsize=fontsize + 2, labelpad=0)
+
+        axes_com[0].yaxis.set_label_position("right")
+        axes_com[1].yaxis.set_label_position("right")
 
         axes_com[0].pie(
             types_send,

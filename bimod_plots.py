@@ -303,6 +303,7 @@ def plot_spectrum(
     V = Vh.T
 
     r_squared = S[vector_id] ** 2 / (S**2).sum()
+    print(f"s (norm) = {S[vector_id] / (2 * matrix.sum())}")
     print(f"R^2 = {r_squared}")
 
     n_nodes = matrix.shape[0]
@@ -385,7 +386,7 @@ def plot_spectrum(
             axes[0].text(
                 x_id + 1,
                 S[vector_id],
-                f"$\\sigma_{{{x_id}}}={S[vector_id]:2.2f}, R^2={r_squared:1.2f}$",
+                f"$\\mu_{{{x_id+1}}}={S[vector_id]:2.2f}, R^2={r_squared:1.2f}$",
                 # f"$s_{{{x_id}}}={S[vector_id]:2.2f}, R^2={r_squared:1.2f}$",
                 fontsize=18 * fontscale,
                 ha="left",
@@ -435,9 +436,8 @@ def plot_spectrum(
         clip_on=False,
     )
 
-    axes[0].plot([1], [0], transform=axes[0].transAxes, **kwargs)
-
     if split_ax:
+        axes[0].plot([1], [0], transform=axes[0].transAxes, **kwargs)
         axes[1].plot([0], [0], transform=axes[1].transAxes, **kwargs)
 
     # Parameters
@@ -453,8 +453,10 @@ def plot_spectrum(
 
     axes[0].set_xlim(-2, show_n_eig - 0.5)
 
-    n_ticks = show_n_eig // 2
-    axes[0].set_xticks(np.arange(0, show_n_eig, n_ticks))
+    n_ticks = show_n_eig // 3
+    axes[0].set_xticks(
+        np.arange(0, show_n_eig, n_ticks), labels=np.arange(0, show_n_eig, n_ticks) + 1
+    )
 
     if split_ax:
         axes[1].set_xlim(len(S) - show_n_eig + 0.5, len(S) + 2)
@@ -467,12 +469,13 @@ def plot_spectrum(
     if split_ax:
         axes[1].spines.left.set_visible(False)
 
-    ax.set_xlabel("Indices $k$", fontsize=18 * fontscale)
-    axes[0].set_ylabel("Singular values $\\sigma_k$", fontsize=18 * fontscale)
+    ax.set_xlabel("Indices $n$", fontsize=18 * fontscale)
+    axes[0].set_ylabel("Singular Values $\\mu_n$", fontsize=18 * fontscale)
     # axes[0].set_ylabel("Singular values $s_i$", fontsize=18 * fontscale)
 
     for ax in axes[:2]:
         ax.spines[["top", "right"]].set_visible(False)
+        ax.spines[:].set_linewidth(2)
 
         # ax.set_xticks(np.linspace(-.1, .1, 3), labels=np.linspace(-.1, .1, 3), fontsize=18*fontscale)
         # ax.set_yticks(np.linspace(-.1, .1, 3), labels=np.linspace(-.1, .1, 3), fontsize=18*fontscale)
@@ -483,6 +486,7 @@ def plot_spectrum(
         labelleft=True,
         labelbottom=True,
         labelsize=16 * fontscale,
+        width=2,
     )
 
     if split_ax:
@@ -609,7 +613,7 @@ def plot_graph_embedding(
         fontdict={"fontweight": "bold"},
     )
     if override_title is None:
-        override_title = f"Bimodularity embedding $(k={{{vector_id}}})$"
+        override_title = f"Bimodularity Embedding $(n={{{vector_id+1}}})$"
     ax.set_title(override_title, fontsize=20 * fontscale)
     ax.tick_params(
         left=True,
@@ -617,8 +621,10 @@ def plot_graph_embedding(
         labelleft=True,
         labelbottom=True,
         labelsize=16 * fontscale,
+        width=2,
     )
     ax.spines[["top", "right"]].set_visible(False)
+    ax.spines[:].set_linewidth(2)
 
     ax.set_xticks(
         np.linspace(-0.1, 0.1, 3),
@@ -631,7 +637,13 @@ def plot_graph_embedding(
         fontsize=18 * fontscale,
     )
 
-    ax.set_xlabel(f"Left singular vector $u_{{{vector_id}}}$", fontsize=18 * fontscale)
-    ax.set_ylabel(f"Right singular vector $v_{{{vector_id}}}$", fontsize=18 * fontscale)
+    ax.set_xlabel(
+        f"Left Singular Vector $\\mathbf{{u}}_{{{vector_id+1}}}$",
+        fontsize=18 * fontscale,
+    )
+    ax.set_ylabel(
+        f"Right Singular Vector $\\mathbf{{v}}_{{{vector_id+1}}}$",
+        fontsize=18 * fontscale,
+    )
 
     return ax
