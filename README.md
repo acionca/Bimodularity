@@ -15,3 +15,14 @@ Code to replicate analyses and figures of [REF & LINK TO PAPER]().
 - Scikit-Learn
 
 ## Usage
+
+The `Bimodularity-Figures.ipynb` notebook:
+- generates the canonical graphs,
+- loads the *C. elegans* data,
+- computes the bimodularity analyses,
+- and creates all the figures in the article.
+
+The `Bimodularity-Supplementary.ipynb` notebook:
+- creates all the supplementary figures in the article.
+
+Both notebooks are self-sufficient and should run when using the `run all` command.

@@ -99,8 +99,11 @@ def edge_bicommunities(
     if scale_S is None:
         scale_S = np.ones(n_components)
 
-    u_features = U[:, :n_components] * np.sqrt(scale_S)
-    v_features = V[:, :n_components] * np.sqrt(scale_S)
+    # u_features = U[:, :n_components] * np.sqrt(scale_S)
+    # v_features = V[:, :n_components] * np.sqrt(scale_S)
+
+    u_features = U[:, :n_components] * scale_S
+    v_features = V[:, :n_components] * scale_S
 
     if method in ["partition", "sign"]:
         u_features = np.sign(u_features).astype(int)

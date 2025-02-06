@@ -105,12 +105,67 @@ def draw_self_loop(
     return axes
 
 
+def draw_smaller_self_loop(
+    axes: Axes,
+    posx: float,
+    posy: float,
+    size: float,
+    rad: float = 0.4,
+    offset: float = 0.01,
+    mutation_scale: int = 20,
+    onearrow: bool = True,
+) -> Axes:
+
+    all_arrows_pos = [
+        (posx, posy, posx, posy - size, rad),
+        (posx - offset, posy - size + offset, posx + size, posy - size, rad),
+        (posx + size - offset, posy - size - offset, posx + size, posy, rad),
+    ]
+
+    all_arrows_pos = [
+        (posx, posy, posx, posy - size, rad),
+        (
+            posx - offset,
+            posy - size + offset,
+            posx + size + offset,
+            posy - size + offset,
+            rad,
+        ),
+        (posx + size, posy - size, posx + size, posy, rad),
+    ]
+
+    for pos_i, arr_pos in enumerate(all_arrows_pos):
+        px, py, sx, sy, rad = arr_pos
+
+        style = "-"
+        if onearrow:
+            if pos_i == len(all_arrows_pos) - 1:
+                style = "-|>"
+        elif pos_i % 2:
+            style = "-|>"
+
+        arrow = FancyArrowPatch(
+            (px, py),
+            (sx, sy),
+            arrowstyle=style,
+            mutation_scale=mutation_scale,
+            linewidth=2,
+            color="k",
+            connectionstyle=f"arc3,rad={rad}",
+        )
+
+        axes.add_patch(arrow)
+
+    return axes
+
+
 def plot_community_scheme(
     ax: Optional[Axes] = None,
     use_cmap: bool = True,
     title_letter: str = "",
     fontscale: float = 1.2,
     com_names: Optional[np.ndarray] = None,
+    com_names_yoffset: float = 0,
     x_names: [str, str] = ["Sending 1", "Sending 2"],
     y_names: [str, str] = ["Receiving 1", "Receiving 2"],
     arrow_colors: Optional[np.ndarray] = None,
@@ -186,7 +241,8 @@ def plot_community_scheme(
 
     for pos, com_name in zip(xy_pos, com_names):
         ax.text(
-            *pos,
+            pos[0],
+            pos[1] + com_names_yoffset,
             com_name,
             fontsize=24 * fontscale,
             fontweight="bold",
@@ -386,10 +442,13 @@ def plot_spectrum(
                 markeredgecolor="k",
                 markeredgewidth=4,
             )
+            angle = (V.T @ U)[vector_id, vector_id]
             axes[0].text(
                 x_id + 1,
                 S[vector_id],
-                f"$\\mu_{{{x_id+1}}}={S[vector_id]:2.2f}, R^2={r_squared:1.2f}$",
+                # f"$\\mu_{{{x_id+1}}}={S[vector_id]:2.2f}, R^2={r_squared:1.2f}$",
+                # f"$\\mu_{{{x_id+1}}}={S[vector_id]:2.2f},\,\\mathbf{{v}}_{{{vector_id+1}}}^{{T}}\\mathbf{{u}}_{{{vector_id+1}}}={angle:1.2f}$",
+                f"$\\mu_{{{x_id+1}}}={S[vector_id]:2.2f}$\n$\\mathbf{{v}}_{{{vector_id+1}}}^{{T}}\\mathbf{{u}}_{{{vector_id+1}}}={angle:1.2f}$",
                 # f"$s_{{{x_id}}}={S[vector_id]:2.2f}, R^2={r_squared:1.2f}$",
                 fontsize=18 * fontscale,
                 ha="left",
@@ -511,6 +570,7 @@ def plot_graph_embedding(
     ax: Optional[Axes] = None,
     use_cmap: bool = True,
     cmap: str = "plasma",
+    static_color: str = "tab:blue",
     write_label: bool = False,
     write_var: bool = False,
     label_lw: int = 3,
@@ -556,7 +616,7 @@ def plot_graph_embedding(
             except ValueError:
                 colors = [cmap] * n_nodes
     else:
-        colors = "tab:blue"
+        colors = static_color
 
     ax.scatter(
         U[:, vector_id],
@@ -576,6 +636,29 @@ def plot_graph_embedding(
             f"$R^2={expl_var:1.3f}$",
             transform=ax.transAxes,
             fontsize=16 * fontscale,
+            path_effects=[
+                withStroke(
+                    linewidth=label_lw,
+                    foreground="w",
+                    alpha=0.8,
+                )
+            ],
+        )
+
+        angle = (V.T @ U)[vector_id, vector_id]
+        ax.text(
+            0.05,
+            0.85,
+            f"$\\mathbf{{v}}^T\\mathbf{{u}}={angle:1.2f}$",
+            transform=ax.transAxes,
+            fontsize=16 * fontscale,
+            path_effects=[
+                withStroke(
+                    linewidth=label_lw,
+                    foreground="w",
+                    alpha=0.8,
+                )
+            ],
         )
 
     if write_label:
@@ -756,6 +839,7 @@ def plot_all_bicommunity(
     scatter_only=False,
     titles=None,
     nrows=1,
+    ncols=None,
     draw_legend=True,
     legend_on_ax=False,
     cmap=None,
@@ -763,10 +847,12 @@ def plot_all_bicommunity(
     gspec_hspace=0.05,
     **kwargs,
 ):
+    if ncols is None:
+        ncols = len(send_com) // nrows + (len(send_com) % nrows)
 
     com_gs = GridSpecFromSubplotSpec(
         nrows=nrows,
-        ncols=len(send_com) // nrows + (len(send_com) % nrows),
+        ncols=ncols,
         # ncols=len(send_com) // nrows,
         subplot_spec=axes,
         wspace=gspec_wspace,
@@ -782,7 +868,10 @@ def plot_all_bicommunity(
         U, _, Vh = dgsp.sorted_SVD(dgsp.modularity_matrix(adjacency))
         V = Vh.T
 
-        graph_pos = {i: (U[i, 0], V[i, 0]) for i, _ in enumerate(adjacency)}
+        if np.allclose(adjacency, adjacency.T):
+            graph_pos = {i: (U[i, 0], V[i, 1]) for i, _ in enumerate(adjacency)}
+        else:
+            graph_pos = {i: (U[i, 0], V[i, 0]) for i, _ in enumerate(adjacency)}
     else:
         graph_pos = nx.spring_layout(nx.DiGraph(adjacency))
 
