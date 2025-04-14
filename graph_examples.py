@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union
 import numpy as np
 
 
@@ -488,5 +488,54 @@ def toy_n_communities(
                 [connectors[2][1], connectors[4][1], connectors[5][1], communities[3]],
             ]
         )
+
+    return adj
+
+
+def block_cycle(
+    nodes_per_com: int,
+    n_blocks: int = 3,
+    com_density: float = 0.5,
+    connect_density: Union[list[float], float] = 0.5,
+    seed: Optional[int] = None,
+) -> np.ndarray:
+
+    if seed is None:
+        seed = int(np.random.normal(10000, 100))
+
+    if isinstance(connect_density, (int, float)):
+        connect_density = [connect_density] * n_blocks
+
+    communities = [
+        random_graph(
+            nodes_per_com, edge_prob=com_density, directed=True, seed=seed + seed_i
+        )
+        for seed_i in range(n_blocks)
+    ]
+
+    connectors = [
+        random_connector(
+            nodes_per_com,
+            edge_prob=p_edge,
+            directed=True,
+            out_prob=1,
+            seed=seed + seed_i,
+        )[0]
+        for seed_i, p_edge in enumerate(connect_density)
+    ]
+
+    zero_com = np.zeros_like(communities[0])
+    row_blocks = np.array(
+        [
+            [communities[i], connectors[i]] + [zero_com] * (n_blocks - 2)
+            for i in range(n_blocks)
+        ]
+    )
+
+    for i in range(n_blocks):
+        row_blocks[i] = np.roll(row_blocks[i], i, axis=0)
+
+    rows_conc = [np.concatenate(row_blocks[i], axis=1) for i in range(n_blocks)]
+    adj = np.concatenate(rows_conc, axis=0)
 
     return adj

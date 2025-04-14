@@ -1,6 +1,7 @@
 # emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
 # vi: set ft=python sts=4 ts=4 sw=4 et:
 
+from matplotlib import animation
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpecFromSubplotSpec
 
@@ -8,6 +9,7 @@ import numpy as np
 from scipy.linalg import block_diag
 import networkx as nx
 
+import os.path as op
 from typing import Optional
 
 from matplotlib.axes import Axes
@@ -55,8 +57,8 @@ def add_cbar(fig: Figure, ax: Axes, **kwargs) -> Axes:
 
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.05)
-    fig.colorbar(ax.get_children()[0], cax=cax, orientation="vertical", **kwargs)
-    return fig, ax
+    cbar = fig.colorbar(ax.get_children()[0], cax=cax, orientation="vertical", **kwargs)
+    return fig, ax, cbar
 
 
 def draw_self_loop(
@@ -102,12 +104,67 @@ def draw_self_loop(
     return axes
 
 
+def draw_smaller_self_loop(
+    axes: Axes,
+    posx: float,
+    posy: float,
+    size: float,
+    rad: float = 0.4,
+    offset: float = 0.01,
+    mutation_scale: int = 20,
+    onearrow: bool = True,
+) -> Axes:
+
+    all_arrows_pos = [
+        (posx, posy, posx, posy - size, rad),
+        (posx - offset, posy - size + offset, posx + size, posy - size, rad),
+        (posx + size - offset, posy - size - offset, posx + size, posy, rad),
+    ]
+
+    all_arrows_pos = [
+        (posx, posy, posx, posy - size, rad),
+        (
+            posx - offset,
+            posy - size + offset,
+            posx + size + offset,
+            posy - size + offset,
+            rad,
+        ),
+        (posx + size, posy - size, posx + size, posy, rad),
+    ]
+
+    for pos_i, arr_pos in enumerate(all_arrows_pos):
+        px, py, sx, sy, rad = arr_pos
+
+        style = "-"
+        if onearrow:
+            if pos_i == len(all_arrows_pos) - 1:
+                style = "-|>"
+        elif pos_i % 2:
+            style = "-|>"
+
+        arrow = FancyArrowPatch(
+            (px, py),
+            (sx, sy),
+            arrowstyle=style,
+            mutation_scale=mutation_scale,
+            linewidth=2,
+            color="k",
+            connectionstyle=f"arc3,rad={rad}",
+        )
+
+        axes.add_patch(arrow)
+
+    return axes
+
+
 def plot_community_scheme(
     ax: Optional[Axes] = None,
     use_cmap: bool = True,
     title_letter: str = "",
     fontscale: float = 1.2,
     com_names: Optional[np.ndarray] = None,
+    com_names_yoffset: float = 0,
     x_names: [str, str] = ["Sending 1", "Sending 2"],
     y_names: [str, str] = ["Receiving 1", "Receiving 2"],
     arrow_colors: Optional[np.ndarray] = None,
@@ -183,7 +240,8 @@ def plot_community_scheme(
 
     for pos, com_name in zip(xy_pos, com_names):
         ax.text(
-            *pos,
+            pos[0],
+            pos[1] + com_names_yoffset,
             com_name,
             fontsize=24 * fontscale,
             fontweight="bold",
@@ -647,3 +705,76 @@ def plot_graph_embedding(
     )
 
     return ax
+
+
+def random_circle_patch(n_samples: int, center_offset: tuple = (0, 0), rmax: float = 1):
+    rand_angle = np.random.uniform(0, 2 * np.pi, n_samples)
+    rand_radius = np.random.uniform(0, rmax, n_samples)
+
+    rand = (
+        np.vstack([np.cos(rand_angle), np.sin(rand_angle)]) * np.sqrt(rand_radius)
+        + np.array(center_offset)[:, None]
+    )
+
+    return rand
+
+
+def circular_layout(
+    n_blocks: int,
+    n_per_com: int,
+    radius: float = 1,
+    small_radius: float = 0.3,
+    return_dict: bool = False,
+):
+    circular_centers = (
+        np.array(
+            [
+                [np.cos(2 * np.pi * i / n_blocks), np.sin(2 * np.pi * i / n_blocks)]
+                for i in range(n_blocks)
+            ]
+        )
+        * radius
+    )
+
+    circular_pos = np.array(
+        [random_circle_patch(n_per_com, c, small_radius) for c in circular_centers]
+    )
+    circular_pos = np.swapaxes(circular_pos, 0, 1).reshape(2, -1)
+
+    if return_dict:
+        circ_dict = {i: (c[0], c[1]) for i, c in enumerate(circular_pos.T)}
+        return circular_pos, circ_dict
+
+    return circular_pos
+
+
+def graph_signal_gif(
+    all_recon: np.ndarray,
+    graph_pos: dict,
+    figure_loc: str,
+    gif_name: str,
+    savegif: bool = False,
+):
+
+    fig, ax = plt.subplots(
+        ncols=2,
+        nrows=2,
+        figsize=(10, 10),
+        gridspec_kw={"wspace": 0, "height_ratios": [2, 1]},
+    )
+
+    def animate(i):
+        scat.set_offsets((x[i], 0))
+        return (scat,)
+
+    ani = animation.FuncAnimation(
+        fig, animate, repeat=True, frames=len(x) - 1, interval=50
+    )
+
+    if savegif:
+        writer = animation.PillowWriter(
+            fps=15, metadata=dict(artist="Me"), bitrate=1800
+        )
+        ani.save(op.join(figure_loc, gif_name), writer=writer)
+
+    plt.show()

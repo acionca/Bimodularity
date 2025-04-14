@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 from scipy.io import loadmat
 
+import h5py
+
 
 def load_celegans_graph(
     path_to_worm_data: str = "data",
@@ -183,3 +185,27 @@ def load_human_graph():
 
     node_type = [type2num[lab.split("-")[0]] for lab in labels]
     labels = ["-".join(lab.split("-")[1:]) for lab in labels]
+
+
+def get_aggprop(h5dict: h5py._hl.files.File, property: str):
+    """
+    Get the bundles statistics on whole brain level from the HDF5 file.
+
+    Parameters
+    ----------
+    h5dict : h5py._hl.files.File
+        The opened HDF5 file.
+    property : str
+        The property to extract from the HDF5 file.
+
+    Returns
+    -------
+    ret : np.arrasy
+        The array containing the requested property values.
+    """
+
+    try:
+        ret = np.array(h5dict.get("matrices").get(property))
+    except:
+        print("Not valid property OR h5 not opened")
+    return ret

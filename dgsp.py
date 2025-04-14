@@ -3,6 +3,7 @@
 
 from typing import Optional, Union
 import numpy as np
+from scipy.linalg import svd
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
@@ -66,7 +67,8 @@ def modularity_quadratic(mod_mat, signal):
 
 def sorted_SVD(matrix: np.ndarray, fix_negative: bool = False, sort_by_q: bool = False):
 
-    U, S, Vh = np.linalg.svd(matrix, full_matrices=True)
+    U, S, Vh = np.linalg.svd(matrix)
+    # U, S, Vh = svd(matrix)
 
     if fix_negative:
         for i, _ in enumerate(matrix):
@@ -289,21 +291,28 @@ def edge_bicommunities(
     U,
     V,
     n_components,
-    method="partition",
+    method="kmeans",
     n_kmeans=10,
     verbose=False,
     scale_S=None,
     assign_only=False,
+    return_centroids=False,
     **kwargs,
 ) -> tuple:
 
     n_nodes = adjacency.shape[0]
 
+    if n_components > len(U):
+        print(
+            f"Warning: `n_components` too large, fixing to {len(U)} (was {n_components})."
+        )
+        n_components = len(U)
+
     if scale_S is None:
         scale_S = np.ones(n_components)
 
-    u_features = U[:, :n_components] * np.sqrt(scale_S)
-    v_features = V[:, :n_components] * np.sqrt(scale_S)
+    u_features = U[:, :n_components] * scale_S
+    v_features = V[:, :n_components] * scale_S
 
     if method in ["partition", "sign"]:
         u_features = np.sign(u_features).astype(int)
@@ -352,6 +361,15 @@ def edge_bicommunities(
     edge_clusters_mat = np.zeros((n_nodes, n_nodes), dtype=int)
     edge_clusters_mat[adjacency != 0] = edge_clusters
 
+    if return_centroids:
+
+        # cluster_centroids = np.zeros((n_clusters, 2, n_components))
+        cluster_centroids = kmeans.cluster_centers_.reshape(
+            (n_clusters, 2, n_components)
+        )
+
+        return edge_clusters, edge_clusters_mat, cluster_centroids
+
     return edge_clusters, edge_clusters_mat
 
 
@@ -365,7 +383,7 @@ def get_best_k(X, max_k=10, verbose=False):
         silhouette[i] = silhouette_score(X, kmeans.labels_)
 
         if verbose:
-            print(f"Silhouette score for K={n} is : {silhouette[i]:1.2f}")
+            print(f"Silhouette score for K={n} is : {silhouette[i]:1.3f}")
 
     print(
         f"Best average silhouette_score is : {np.max(silhouette):1.2f} for K={n_clusters[np.argmax(silhouette)]}"
@@ -373,7 +391,12 @@ def get_best_k(X, max_k=10, verbose=False):
     return n_clusters[np.argmax(silhouette)]
 
 
-def get_node_clusters(edge_clusters, edge_clusters_mat, method="bimod", scale=True):
+def get_node_clusters(
+    edge_clusters,
+    edge_clusters_mat,
+    method="bimod",
+    scale=True,
+):
     n_nodes = edge_clusters_mat.shape[0]
     n_clusters = np.max(edge_clusters)
 
@@ -456,7 +479,8 @@ def bimod_index_nodes(adjacency, send_com, receive_com, scale=False):
         bimod_indices[cluster_id] = np.sum(adj_contrib - null_contrib)
 
         if scale:
-            all_edges = np.sum(np.atleast_2d(send_fltr).T @ np.atleast_2d(receive_fltr))
+            # all_edges = np.sum(np.atleast_2d(send_fltr).T @ np.atleast_2d(receive_fltr))
+            all_edges = np.sum(adjacency)
             bimod_indices[cluster_id] /= all_edges
         # / np.sum(adj_contrib > 0)
 
@@ -490,7 +514,7 @@ def benchmark_bimod(
     V = Vh.T
 
     if scale_features:
-        scale_factor = S**2 / (S**2).sum()
+        scale_factor = S
     else:
         scale_factor = np.ones(S.shape[0])
 
@@ -529,3 +553,76 @@ def benchmark_bimod(
         all_results.append(all_per_vectors)
 
     return all_results
+
+
+def get_c_pinv(
+    adjacency: np.ndarray,
+    n_vec_max: int,
+    n_kmeans: int,
+    sort_bimod: bool = True,
+    normalize: bool = True,
+    ones: bool = False,
+    return_clusters: bool = False,
+    **kwargs,
+):
+    B = modularity_matrix(adjacency)
+    U, S, Vh = sorted_SVD(B, fix_negative=False)
+    V = Vh.T
+
+    scale_factor = S[:n_vec_max]
+    edge_clusters, edge_clusters_mat = edge_bicommunities(
+        adjacency,
+        U,
+        V,
+        n_vec_max,
+        method="kmeans",
+        n_kmeans=n_kmeans,
+        scale_S=scale_factor,
+        **kwargs,
+    )
+
+    c_out, c_in = get_node_clusters(edge_clusters, edge_clusters_mat)
+
+    bimod_idx = bimod_index_nodes(adjacency, c_out, c_in, scale=True)
+    if sort_bimod:
+        sorting_array = np.flip(np.argsort(bimod_idx))
+        bimod_idx = bimod_idx[sorting_array]
+
+        edge_clusters_mat_sorted = edge_clusters_mat.copy()
+        edge_clusters_sorted = edge_clusters.copy()
+        for i_new, i in enumerate(sorting_array):
+            edge_clusters_mat_sorted[edge_clusters_mat == i + 1] = i_new + 1
+            edge_clusters_sorted[edge_clusters == i + 1] = i_new + 1
+
+        edge_clusters_mat = edge_clusters_mat_sorted
+        edge_clusters = edge_clusters_sorted
+
+        c_out = c_out[sorting_array]
+        c_in = c_in[sorting_array]
+
+    C_mat_out = c_out.T
+    C_mat_in = c_in.T
+
+    if ones:
+        C_mat_out = (C_mat_out > 0).astype(float)
+        C_mat_in = (C_mat_in > 0).astype(float)
+
+    if normalize:
+        C_mat_out /= np.linalg.norm(C_mat_out, axis=0)
+        C_mat_in /= np.linalg.norm(C_mat_in, axis=0)
+
+    c_pinv_out = np.linalg.pinv(C_mat_out)
+    c_pinv_in = np.linalg.pinv(C_mat_in)
+
+    if return_clusters:
+        return (
+            C_mat_out,
+            c_pinv_out,
+            C_mat_in,
+            c_pinv_in,
+            bimod_idx,
+            edge_clusters,
+            edge_clusters_mat,
+        )
+
+    return C_mat_out, c_pinv_out, C_mat_in, c_pinv_in, bimod_idx

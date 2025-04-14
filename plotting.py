@@ -1152,7 +1152,7 @@ def plot_all_bicommunity(
         com_axes[i].set_title(title, fontsize=20)
 
     if cmap is None:
-        cmap = plt.get_cmap("RdBu")
+        cmap = plt.get_cmap("RdBu_r")
     elif isinstance(cmap, str):
         cmap = plt.get_cmap(cmap, 5)
 
