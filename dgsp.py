@@ -373,7 +373,7 @@ def edge_bicommunities(
     return edge_clusters, edge_clusters_mat
 
 
-def get_best_k(X, max_k=10, verbose=False):
+def get_best_k(X, max_k=10, verbose=False, return_silhouette=False):
     print(f"Running silhouette analysis for k = 2 to {max_k} ...")
     n_clusters = np.arange(2, max_k)
     silhouette = np.zeros(n_clusters.shape[0])
@@ -388,6 +388,8 @@ def get_best_k(X, max_k=10, verbose=False):
     print(
         f"Best average silhouette_score is : {np.max(silhouette):1.2f} for K={n_clusters[np.argmax(silhouette)]}"
     )
+    if return_silhouette:
+        return silhouette
     return n_clusters[np.argmax(silhouette)]
 
 

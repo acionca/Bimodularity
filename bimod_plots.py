@@ -726,10 +726,15 @@ def circular_layout(
     small_radius: float = 0.3,
     return_dict: bool = False,
 ):
+    offset = np.pi * (n_blocks - 2) / (2 * n_blocks)
+
     circular_centers = (
         np.array(
             [
-                [np.cos(2 * np.pi * i / n_blocks), np.sin(2 * np.pi * i / n_blocks)]
+                [
+                    np.cos(offset + 2 * np.pi * i / n_blocks),
+                    np.sin(offset + 2 * np.pi * i / n_blocks),
+                ]
                 for i in range(n_blocks)
             ]
         )
