@@ -4,7 +4,70 @@ import pandas as pd
 import numpy as np
 from scipy.io import loadmat
 
+import pickle
 import h5py
+
+
+def save(pickle_filename: str, iterable: object) -> None:
+    """
+    Pickle an object to a file.
+
+    Parameters
+    ----------
+    pickle_filename : str
+        Path to the file where the object will be pickled.
+    iterable : object
+        The object to be pickled.
+
+    Returns
+    -------
+    None
+    """
+    with open(pickle_filename, "wb") as handle:
+        pickle.dump(iterable, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def load(pickle_filename: str) -> object:
+    """
+    Load a pickled object from the specified file.
+
+    Parameters
+    ----------
+    pickle_filename : str
+        The filename of the pickled object to load.
+
+    Returns
+    -------
+    object
+        The loaded object.
+    """
+    with open(pickle_filename, "rb") as handle:
+        b = pickle.load(handle)
+    return b
+
+
+def get_aggprop(h5dict: h5py._hl.files.File, property: str):
+    """
+    Get the bundles statistics on whole brain level from the HDF5 file.
+
+    Parameters
+    ----------
+    h5dict : h5py._hl.files.File
+        The opened HDF5 file.
+    property : str
+        The property to extract from the HDF5 file.
+
+    Returns
+    -------
+    ret : np.arrasy
+        The array containing the requested property values.
+    """
+
+    try:
+        ret = np.array(h5dict.get("matrices").get(property))
+    except:
+        print("Not valid property OR h5 not opened")
+    return ret
 
 
 def load_celegans_graph(
@@ -187,25 +250,45 @@ def load_human_graph():
     labels = ["-".join(lab.split("-")[1:]) for lab in labels]
 
 
-def get_aggprop(h5dict: h5py._hl.files.File, property: str):
-    """
-    Get the bundles statistics on whole brain level from the HDF5 file.
+def load_brain_graph(
+    path_to_data="./data/brain", delay_max=100, scale=1, undirected=True
+):
+    filename = f"bundle_probability_atlas-scale{scale}.pkl"
 
-    Parameters
-    ----------
-    h5dict : h5py._hl.files.File
-        The opened HDF5 file.
-    property : str
-        The property to extract from the HDF5 file.
+    bundle_prob = load(op.join(path_to_data, filename))
+    bundle_prob = bundle_prob[:-2][:, :-2]
+    bundle_prob -= np.diag(np.diag(bundle_prob))
+    ftract_prob = load(
+        op.join(path_to_data, f"adj_probability_ftract-d{delay_max}-scale{scale}.pkl")
+    )
+    ftract_prob = ftract_prob[:-2][:, :-2]
 
-    Returns
-    -------
-    ret : np.arrasy
-        The array containing the requested property values.
-    """
+    node_centers = load(op.join(path_to_data, f"roi_centers-ftract-scale{scale}.pkl"))[
+        :82
+    ]
+    height_scale = node_centers[:, 2] - node_centers[:, 2].min()
+    height_scale = height_scale / height_scale.max()
 
-    try:
-        ret = np.array(h5dict.get("matrices").get(property))
-    except:
-        print("Not valid property OR h5 not opened")
-    return ret
+    scale_to_nroi = {1: "33", 2: "60", 3: "125"}
+
+    labels = np.genfromtxt(op.join(path_to_data, f"brain_labels.csv"), dtype=str)
+
+    print(f"There are {len(labels)} nodes in the graph")
+    all_types = ["lh", "rh", "lhsc", "rhsc"]
+    types_rename = ["Left", "Right", "Left-sub", "Right-sub"]
+    type2num = {t: i for i, t in enumerate(all_types)}
+
+    node_type = [type2num[lab.split("-")[0]] for lab in labels]
+
+    k_threshold = 0.9
+
+    if undirected:
+        k_matrix = (bundle_prob.copy() > k_threshold).astype(int)
+        # k_matrix = bundle_prob + bundle_prob.T
+    else:
+        k_matrix = (2 * bundle_prob * ftract_prob) / (ftract_prob + ftract_prob.T)
+        k_matrix = (k_matrix >= k_threshold).astype(int)
+
+    print("Is it undirected ?", np.allclose(k_matrix, k_matrix.T))
+
+    return k_matrix, labels, node_centers

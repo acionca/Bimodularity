@@ -125,6 +125,7 @@ def benchmark_clustering(
     all_operators=["modularity", "laplacian"],
     start_comp=0,
     norm=True,
+    sqrt=False,
 ):
 
     test_labels = np.zeros(
@@ -157,6 +158,7 @@ def benchmark_clustering(
                 (start_comp[i], start_comp[i] + n_comp),
                 operator=operator,
                 norm=True,
+                sqrt=sqrt,
             )
             edge_retest = edge_signal_product(
                 graph,
@@ -164,6 +166,7 @@ def benchmark_clustering(
                 (start_comp[i], start_comp[i] + n_comp),
                 operator=operator,
                 norm=True,
+                sqrt=sqrt,
             )
 
             for k, k_clust in enumerate(all_k_clusters):
@@ -234,3 +237,11 @@ def get_centroid_similarities(t_centroids, rt_centroids):
                     all_cent_match[k][n, i][~np.eye(k_clust, dtype=bool)]
                 ).mean()
     return all_cent_match, all_diag_means, all_off_diag_means
+
+
+def main():
+    pass
+
+
+if __name__ == "__main__":
+    main()
