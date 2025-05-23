@@ -5,6 +5,8 @@ from tqdm.notebook import tqdm
 from sklearn.cluster import KMeans
 from scipy.optimize import linear_sum_assignment
 
+from joblib import Parallel, delayed
+
 from dgsp import modularity_matrix, sorted_SVD
 
 
@@ -44,7 +46,9 @@ def get_recon_mat(adj, comp_range, operator="modularity", **kwargs):
     return rec_mat
 
 
-def edge_signal_product(adj, x_concat, comp_range, operator="modularity", **kwargs):
+def edge_signal_product(
+    adj, x_concat, comp_range, operator="modularity", sqrt=False, **kwargs
+):
     n_nodes = adj.shape[0]
     if "naive" in operator:
         rec_mat = np.eye(2 * len(adj))
@@ -54,19 +58,24 @@ def edge_signal_product(adj, x_concat, comp_range, operator="modularity", **kwar
     C_rec = rec_mat @ x_concat.T
 
     # Outer product and edge masking
-    outer = np.array([np.outer(rec[:n_nodes], rec[n_nodes:]) for rec in C_rec.T])
-    edge_assignments_vec = outer[..., adj != 0]
+    # outer1 = np.array([np.outer(rec[:n_nodes], rec[n_nodes:]) for rec in C_rec.T])
+    # edge_assignments_vec = outer[..., adj != 0]
+    outer = C_rec[:n_nodes, None, :] * C_rec[None, n_nodes:, :]
+
+    if sqrt:
+        outer = np.sign(outer) * np.sqrt(np.abs(outer))
+    edge_assignments_vec = outer[adj != 0].T
 
     return edge_assignments_vec
 
 
 def norm_clustering(x_proj, k_clust, norm=True):
 
-    x_clust = x_proj.copy()
+    norm_val = 1
     if norm:
-        x_clust = x_clust / np.linalg.norm(x_clust, axis=1)[:, None]
+        norm_val = np.linalg.norm(x_proj, axis=1)[:, None]
 
-    kmeans = KMeans(n_clusters=k_clust).fit(x_clust)
+    kmeans = KMeans(n_clusters=k_clust).fit(x_proj / norm_val)
 
     return kmeans.labels_, kmeans.cluster_centers_
 
@@ -78,6 +87,7 @@ def prepare_benchmark(
     all_comps=np.arange(2, 10, 1),
     all_operators=["modularity", "laplacian"],
     start_comp=0,
+    sqrt=False,
 ):
     all_edge_test = np.zeros(
         (len(all_comps), len(all_operators), len(x_test), np.sum(graph != 0))
@@ -92,20 +102,17 @@ def prepare_benchmark(
     for n, n_comp in enumerate(all_comps):
         print(f"Computing for {n_comp} components")
         for i, operator in enumerate(all_operators):
-            all_edge_test[n, i] = edge_signal_product(
+            e_both = edge_signal_product(
                 graph,
-                x_test,
+                np.concatenate([x_test, x_retest]),
                 (start_comp[i], start_comp[i] + n_comp),
                 operator=operator,
                 norm=True,
+                sqrt=sqrt,
             )
-            all_edge_retest[n, i] = edge_signal_product(
-                graph,
-                x_retest,
-                (start_comp[i], start_comp[i] + n_comp),
-                operator=operator,
-                norm=True,
-            )
+            all_edge_test[n, i] = e_both[: len(x_test)]
+            all_edge_retest[n, i] = e_both[len(x_test) :]
+
     return all_edge_test, all_edge_retest
 
 
@@ -139,6 +146,8 @@ def benchmark_clustering(
     if isinstance(start_comp, int):
         start_comp = [start_comp] * len(all_operators)
 
+    pbar = tqdm(total=len(all_comps) * len(all_operators) * len(all_k_clusters))
+
     for n, n_comp in enumerate(all_comps):
         print(f"Computing for {n_comp} components")
         for i, operator in enumerate(all_operators):
@@ -164,6 +173,8 @@ def benchmark_clustering(
                 retest_labels[k, n, i], retest_centroids[k][n, i] = norm_clustering(
                     edge_retest, k_clust, norm=norm
                 )
+                pbar.update(1)
+    pbar.close()
 
     return test_labels, retest_labels, test_centroids, retest_centroids
 
