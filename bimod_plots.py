@@ -313,6 +313,9 @@ def plot_adjacency(
             )
 
     ax.imshow(plot_adj, cmap=cmap, interpolation="none")
+    # ax.pcolormesh(np.zeros_like(plot_adj), cmap=cmap, vmin=0, vmax=1, edgecolors="face")
+    # ax.pcolormesh(plot_adj, cmap=cmap, edgecolors="face", linewidth=0)
+    # ax.set_ylim(len(plot_adj), 0)
     # axes[1].imshow(graph, cmap="binary_r")
 
     # Parameters B
@@ -372,7 +375,9 @@ def plot_spectrum(
         fig, ax = plt.subplots(figsize=(10, 10))
 
     if split_ax:
-        gs1 = GridSpecFromSubplotSpec(1, 2, subplot_spec=ax, wspace=0.04)
+        gs1 = GridSpecFromSubplotSpec(
+            1, 2, subplot_spec=ax.get_subplotspec(), wspace=0.04
+        )
         axes = [fig.add_subplot(gs1[0]), fig.add_subplot(gs1[1])]
     else:
         axes = [ax] * 2
@@ -845,22 +850,39 @@ def plot_all_bicommunity(
     cmap=None,
     gspec_wspace=0,
     gspec_hspace=0.05,
+    right_pad=None,
     **kwargs,
 ):
     if ncols is None:
         ncols = len(send_com) // nrows + (len(send_com) % nrows)
 
-    com_gs = GridSpecFromSubplotSpec(
-        nrows=nrows,
-        ncols=ncols,
-        # ncols=len(send_com) // nrows,
-        subplot_spec=axes,
-        wspace=gspec_wspace,
-        hspace=gspec_hspace,
-    )
+    if right_pad is not None:
+        com_gs = GridSpecFromSubplotSpec(
+            nrows=nrows,
+            ncols=ncols + 1,
+            # ncols=len(send_com) // nrows,
+            subplot_spec=axes.get_subplotspec(),
+            wspace=gspec_wspace,
+            hspace=gspec_hspace,
+            width_ratios=[1] * ncols + [right_pad],
+        )
+        com_axes = [
+            fig.add_subplot(gs)
+            for gi, gs in enumerate(com_gs)
+            if (gi + 1) % (ncols + 1)
+        ]
+    else:
+        com_gs = GridSpecFromSubplotSpec(
+            nrows=nrows,
+            ncols=ncols,
+            # ncols=len(send_com) // nrows,
+            subplot_spec=axes.get_subplotspec(),
+            wspace=gspec_wspace,
+            hspace=gspec_hspace,
+        )
+        com_axes = [fig.add_subplot(gs) for gs in com_gs]
     # axes.set_visible(False)
     axes.axis("off")
-    com_axes = [fig.add_subplot(gs) for gs in com_gs]
 
     if isinstance(layout, dict):
         graph_pos = layout.copy()
@@ -976,7 +998,7 @@ def plot_bicommunity_types(
 
         axes[com_i].set_visible(False)
         gs_com = GridSpecFromSubplotSpec(
-            2, 1, subplot_spec=axes[com_i], hspace=0.05, wspace=0
+            2, 1, subplot_spec=axes[com_i].get_subplotspec(), hspace=0.05, wspace=0
         )
         axes_com = [fig.add_subplot(gs_com[i]) for i in range(2)]
 
