@@ -1,6 +1,6 @@
 # Bimodularity Framework
 
-Code to replicate analyses and figures of [Cionca et al. 2025 (Preprint)](https://arxiv.org/abs/2502.04777).
+Code to replicate analyses and figures of A. Cionca, C.H.M. Chan, & D. Van De Ville, Community detection for directed networks revisited using bimodularity, Proc. Natl. Acad. Sci. U.S.A. 122 (35) e2500571122, [https://doi.org/10.1073/pnas.2500571122](https://doi.org/10.1073/pnas.2500571122) (2025).
 
 ## Requirements
 
