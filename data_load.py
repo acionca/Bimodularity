@@ -1,3 +1,4 @@
+import os
 import os.path as op
 
 import pandas as pd
@@ -6,6 +7,8 @@ from scipy.io import loadmat
 
 import pickle
 import h5py
+
+import nibabel as nib
 
 
 def save(pickle_filename: str, iterable: object) -> None:
@@ -187,108 +190,250 @@ def load_celegans_graph(
     return wiring_sym, worm_df
 
 
-def load_human_graph():
-    path_to_data = op.join(path_to_effective, "resources")
+def normalize_slines_vol(
+    mat: np.ndarray,
+    atlas_path: str,
+    atlas_fname: str = "roi_atlas-ftract-scale1-GM.nii.gz",
+    labels: list = None,
+) -> np.ndarray:
 
-    # Could be 50, 100, 200, 400
-    delay_max = 100
-    # delay_max = 100
-    scale = 1
+    atlas_data = nib.load(op.join(atlas_path, atlas_fname)).get_fdata()
+    n_roi = int(atlas_data.max())
 
-    # path_to_data = f"/Users/acionca/data/F-TRACT-090624/{delay_max}" #/probability.txt.gz"
-    # path_to_ftract = f"/Users/acionca/data/F-TRACT-090624/{delay_max}" #/probability.txt.gz"
+    volumes = np.zeros(n_roi, dtype=int)
+    for i in range(n_roi):
+        volumes[i] = np.sum(atlas_data == (i + 1))
 
-    # filename = "adjacency_atlas.pkl"
-    filename = f"bundle_probability_atlas-scale{scale}.pkl"
+    # for vol_i in np.argsort(volumes)[:6]:
+    # print(labels[vol_i], volumes[vol_i])
 
-    bundle_prob = utils.load(op.join(path_to_data, filename))
-    bundle_prob = bundle_prob[:-2][:, :-2]
-    bundle_prob -= np.diag(np.diag(bundle_prob))
-    ftract_prob = utils.load(
-        op.join(path_to_data, f"adj_probability_ftract-d{delay_max}-scale{scale}.pkl")
-    )
-    ftract_prob = ftract_prob[:-2][:, :-2]
+    # Normalizing by average volume of each pair of regions
+    vol_matrix = (volumes[:, None] + volumes[None, :]) / 2
 
-    print(bundle_prob.shape)
-    print(ftract_prob.shape)
+    # print(vol_matrix.shape)
 
-    node_centers = utils.load(
-        f"/Users/acionca/code/effectivedelay_estimation/resources/roi_centers-ftract-scale{scale}.pkl"
-    )[:82]
-
-    scale_to_nroi = {1: "33", 2: "60", 3: "125"}
-    # brain_regions_fname = "/Users/acionca/data/F-TRACT-090624/Lausanne2008-33 (1).txt"
-    # with open(brain_regions_fname) as f:
-    #    labels = f.readlines()
-    # labels = [lab.strip().split("ctx-")[-1] for lab in labels[:-2]]
-
-    brain_regions_fname = f"/Users/acionca/data/f-tract_v2112/ages_0_15/sr_8.40/seg_None_None/pl_200/Lausanne2008-{scale_to_nroi[scale]}/export/peak_latency/peak_latency.csv"
-    with open(brain_regions_fname) as f:
-        labels = f.readlines()[5:]
-
-    labels = [lab.strip().split("ctx-")[-1].split(",")[0] for lab in labels[:-2]]
-
-    hemi_split = labels[0].split("lh")[1][0]
-
-    labels = [
-        "lhsc" + hemi_split + lab.split("Left-")[-1] if "Left" in lab else lab
-        for lab in labels
-    ]
-    labels = [
-        "rhsc" + hemi_split + lab.split("Right-")[-1] if "Right" in lab else lab
-        for lab in labels
-    ]
-
-    labels = [lab.replace(hemi_split, "-") for lab in labels]
-
-    print(f"There are {len(labels)} nodes in the graph")
-    all_types = ["lh", "rh", "lhsc", "rhsc"]
-    types_rename = ["Left", "Right", "Left-sub", "Right-sub"]
-    type2num = {t: i for i, t in enumerate(all_types)}
-
-    node_type = [type2num[lab.split("-")[0]] for lab in labels]
-    labels = ["-".join(lab.split("-")[1:]) for lab in labels]
+    return mat / vol_matrix
 
 
 def load_brain_graph(
-    path_to_data="./data/brain", delay_max=100, scale=1, undirected=True
+    path_to_data="./data/brain",
+    data_suffix="",
+    delay_max=100,
+    scale=1,
+    b_prob_threshold=0.0,
+    f_prob_threshold=0.0,
+    slines_theshold=0,
+    k_threshold=0.9,
+    undirected=True,
+    use_delay=True,
+    normalize_slines=False,
+    log_slines=False,
+    gamma_dir=1,
+    verbose=False,
 ):
-    filename = f"bundle_probability_atlas-scale{scale}.pkl"
 
-    bundle_prob = load(op.join(path_to_data, filename))
-    bundle_prob = bundle_prob[:-2][:, :-2]
-    bundle_prob -= np.diag(np.diag(bundle_prob))
-    ftract_prob = load(
-        op.join(path_to_data, f"adj_probability_ftract-d{delay_max}-scale{scale}.pkl")
-    )
-    ftract_prob = ftract_prob[:-2][:, :-2]
+    b_prob_fname = f"{data_suffix}bundle_probability_atlas-scale{scale}.pkl"
+    bundle_prob = load(op.join(path_to_data, b_prob_fname))
+    # bundle_prob = bundle_prob[:-2][:, :-2]
+    np.fill_diagonal(bundle_prob, val=0)
 
-    node_centers = load(op.join(path_to_data, f"roi_centers-ftract-scale{scale}.pkl"))[
-        :82
-    ]
-    height_scale = node_centers[:, 2] - node_centers[:, 2].min()
-    height_scale = height_scale / height_scale.max()
+    slines_fname = f"{data_suffix}bundle_streamlines_atlas-scale{scale}.pkl"
+    slines_mat = load(op.join(path_to_data, slines_fname))
+    # slines_mat = np.nan_to_num(slines_mat[:-2][:, :-2])
+    slines_mat = np.nan_to_num(slines_mat)
+    np.fill_diagonal(slines_mat, val=0)
+    slines_mat = (slines_mat + slines_mat.T) // 2
 
-    scale_to_nroi = {1: "33", 2: "60", 3: "125"}
+    if not undirected:
+        f_prob_fname = (
+            f"{data_suffix}adj_probability_ftract-d{delay_max}-scale{scale}.pkl"
+        )
+        ftract_prob = load(op.join(path_to_data, f_prob_fname))
+        ftract_prob = ftract_prob[:-2][:, :-2]
 
-    labels = np.genfromtxt(op.join(path_to_data, f"brain_labels.csv"), dtype=str)
+        delay_fname = f"{data_suffix}adj_delay_ftract-d{delay_max}-scale{scale}.pkl"
+        ftract_delays = load(op.join(path_to_data, delay_fname))
+        ftract_delays = ftract_delays[:-2][:, :-2]
 
-    print(f"There are {len(labels)} nodes in the graph")
-    all_types = ["lh", "rh", "lhsc", "rhsc"]
-    types_rename = ["Left", "Right", "Left-sub", "Right-sub"]
-    type2num = {t: i for i, t in enumerate(all_types)}
+        # Mask for existing f-tract prob and delay (not NaN or 0)
+        noprob = np.logical_or(ftract_prob == 0, np.isnan(ftract_prob))
+        noprob = np.logical_or(ftract_delays == 0, noprob)
+        noprob = np.logical_or(np.isnan(ftract_delays), noprob)
 
-    node_type = [type2num[lab.split("-")[0]] for lab in labels]
+        ftract_delays = np.divide(
+            1,
+            ftract_delays,
+            where=np.logical_not(noprob),
+            out=np.zeros_like(ftract_delays),
+        )
 
-    k_threshold = 0.9
+    node_centers = load(
+        op.join(path_to_data, f"{data_suffix}roi_centers-ftract-scale{scale}.pkl")
+    )  # [:82]
+
+    try:
+        labels = np.genfromtxt(
+            op.join(path_to_data, f"{data_suffix}brain_labels.csv"), dtype=str
+        )
+    except FileNotFoundError:
+        labels = np.genfromtxt(
+            op.join(path_to_data, f"{data_suffix}brain_labels-scale{scale}.csv"),
+            dtype=str,
+        )
+
+    # print(labels[-5:])
+    # for i, lab in enumerate(labels):
+    #     print(i + 1, lab)
+
+    # s_mat = bundle_prob
+    # f_mat = ftract_prob
+
+    if use_delay:
+        s_mat = np.zeros_like(slines_mat)
+        if log_slines:
+            s_mat[slines_mat > 1] = np.log(slines_mat[slines_mat > 1])
+        else:
+            s_mat = slines_mat.copy()
+
+        if not undirected:
+            f_mat = ftract_delays
+    else:
+        s_mat = np.ones_like(slines_mat)
+        s_mat = bundle_prob.copy()
+
+    # s_mat = np.ones_like(slines_mat)
+
+    s_mat[bundle_prob < b_prob_threshold] = 0
+    s_mat[slines_mat < slines_theshold] = 0
+
+    if not undirected:
+        f_mat[ftract_prob < f_prob_threshold] = 0
+
+    if verbose:
+        print(f"There are {len(labels)} nodes in the graph")
+        print(
+            f"{(s_mat > 0).sum()/(slines_mat > 0).sum():.2%} of connections remain after thresholding"
+        )
+
+    if normalize_slines and use_delay:
+        s_mat = normalize_slines_vol(
+            s_mat,
+            atlas_path=path_to_data,
+            atlas_fname=f"{data_suffix}roi_atlas-ftract-scale{scale}-GM.nii.gz",
+            labels=labels,
+        )
+
+    if gamma_dir != 1:
+        f_mat = f_mat**gamma_dir
 
     if undirected:
-        k_matrix = (bundle_prob.copy() > k_threshold).astype(int)
+        k_matrix = s_mat.copy()
         # k_matrix = bundle_prob + bundle_prob.T
     else:
-        k_matrix = (2 * bundle_prob * ftract_prob) / (ftract_prob + ftract_prob.T)
+        # k_matrix = (2 * s_mat) * (f_mat / (f_mat + f_mat.T))
+        k_matrix = s_mat * (f_mat / (f_mat + f_mat.T))
+        k_matrix = np.nan_to_num(k_matrix)
+
+    if k_threshold > 0:
         k_matrix = (k_matrix >= k_threshold).astype(int)
 
-    print("Is it undirected ?", np.allclose(k_matrix, k_matrix.T))
+    if verbose:
+        print("Is it undirected ?", np.allclose(k_matrix, k_matrix.T))
 
     return k_matrix, labels, node_centers
+
+
+def load_nodal_fmri(
+    path_to_atlased="/Users/acionca/data/HCP-MIP/atlased",
+    atlas="Laus2008_smth6_lp0.15",
+    task="rest1_dir-LR",
+    concat=True,
+):
+    path_to_fmri = op.join(path_to_atlased, atlas)
+
+    # task = "motor"
+    # task = "rest1_dir-LR"
+    # task = "rest1"
+    # task = "emotion"
+    # task = "gambling"
+    # task = "language"
+
+    all_fnames = sorted([f for f in os.listdir(path_to_fmri) if task in f])
+    # all_fnames = [f for f in all_fnames if f"{sub}" in f]
+    print(f"Found {len(all_fnames)} matching files")
+
+    all_nodals = [
+        np.genfromtxt(op.join(path_to_fmri, f), delimiter=",") for f in all_fnames
+    ]
+
+    if not concat:
+        return all_nodals
+    else:
+        nodal_fmri = np.concatenate(all_nodals, axis=0)
+        print("Nodal fMRI has shape:", nodal_fmri.shape)
+
+        all_lengths = [len(n) for n in all_nodals]
+
+        # TODO: Implement the paradygm loading and concatenation
+        # if "rest" not in task:
+        #     path_to_paradygm = op.join(
+        #         path_to_fmri, fname.replace("timeseries", "regressor")
+        #     )
+        #     paradygm = np.genfromtxt(path_to_paradygm, delimiter=",").astype(int)
+        # else:
+        #     paradygm = np.zeros(len(nodal_fmri), dtype=int)
+
+        return nodal_fmri, all_lengths  # , paradygm
+
+
+def load_nodal_mat(
+    path_to_hcp: str,
+    task: str = "rest1",
+    dir="LR",
+    atlas="Glasser360",
+    mat_suffix="bp_z",
+    n_subset: int = None,
+    concat: bool = True,
+):
+    all_subs = sorted(os.listdir(path_to_hcp))
+
+    task_suffix = "r" if "rest" in task else "t"
+    if "dir" in task:
+        task_dir = f"{task_suffix}fMRI_{task.split('_dir')[0].upper()}_{dir}"
+    else:
+        task_dir = f"{task_suffix}fMRI_{task.upper()}_{dir}"
+
+    fname_suffix = f"{atlas}S_{mat_suffix}.mat"
+
+    if n_subset is not None:
+        all_subs = all_subs[:n_subset]
+
+    all_nodals = []
+    for sub in all_subs:
+        path_to_mat = op.join(path_to_hcp, sub, task_dir, atlas)
+        fnames = sorted([f for f in os.listdir(path_to_mat) if fname_suffix in f])
+
+        if len(fnames) > 1:
+            print("More than one matching file, taking the first one only")
+
+        mat = loadmat(op.join(path_to_mat, fnames[0]))
+        all_nodals.append(mat["TS"].T)
+
+    if not concat:
+        return all_nodals
+    else:
+        nodal_fmri = np.concatenate(all_nodals, axis=0)
+        print("Nodal fMRI has shape:", nodal_fmri.shape)
+
+        all_lengths = [len(n) for n in all_nodals]
+
+        # TODO: Implement the paradygm loading and concatenation
+        # if "rest" not in task:
+        #     path_to_paradygm = op.join(
+        #         path_to_fmri, fname.replace("timeseries", "regressor")
+        #     )
+        #     paradygm = np.genfromtxt(path_to_paradygm, delimiter=",").astype(int)
+        # else:
+        #     paradygm = np.zeros(len(nodal_fmri), dtype=int)
+
+        return nodal_fmri, all_lengths  # , paradygm

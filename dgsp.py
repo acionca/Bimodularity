@@ -8,6 +8,10 @@ import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.metrics.cluster import adjusted_rand_score
+from sklearn.decomposition import PCA
+
+from scipy.optimize import linear_sum_assignment
+from scipy.spatial.distance import cdist
 
 from graph_examples import toy_random
 
@@ -291,12 +295,18 @@ def edge_bicommunities(
     U,
     V,
     n_components,
-    method="kmeans",
     n_kmeans=10,
     verbose=False,
     scale_S=None,
     assign_only=False,
     return_centroids=False,
+    max_k=20,
+    undirected=False,
+    return_kmeans=False,
+    kwargs_kmeans1={},
+    kwargs_kmeans2={},
+    clust_only=False,
+    d_thresh=0.,
     **kwargs,
 ) -> tuple:
 
@@ -311,58 +321,98 @@ def edge_bicommunities(
     if scale_S is None:
         scale_S = np.ones(n_components)
 
-    u_features = U[:, :n_components] * scale_S
-    v_features = V[:, :n_components] * scale_S
+    u_features = U[:, :n_components] * scale_S[:n_components]
+    v_features = V[:, :n_components] * scale_S[:n_components]
 
-    if method in ["partition", "sign"]:
-        u_features = np.sign(u_features).astype(int)
-        v_features = np.sign(v_features).astype(int)
+    # Slower method
+    # edge_out = np.array([u_features] * n_nodes).T
+    # edge_in = np.array([v_features] * n_nodes)
+    # edge_in = np.moveaxis(edge_in, -1, 0)
+    # edge_assignments = np.concatenate([edge_out, edge_in], axis=0)
+    # edge_assignments_vec = edge_assignments[:, adjacency != 0].T
 
-    edge_out = np.array([u_features] * n_nodes).T
-    edge_in = np.array([v_features] * n_nodes)
-    edge_in = np.moveaxis(edge_in, -1, 0)
-
-    # edge-based clustering
-    edge_assignments = np.concatenate([edge_out, edge_in], axis=0)
-    edge_assignments_vec = edge_assignments.reshape((2 * n_components, -1)).T
-
-    edge_assignments_vec = edge_assignments_vec[(adjacency != 0).reshape(-1)]
+    rows, cols = np.where(adjacency != 0)
+    edge_assignments_vec = np.hstack([u_features[rows], v_features[cols]])
 
     if assign_only:
         return edge_assignments_vec
 
-    if method in ["partition", "sign"]:
-        clusters = np.unique(edge_assignments_vec, axis=0)
-        n_clusters = clusters.shape[0]
-        if verbose:
-            print(f"Found {n_clusters} clusters !")
+    if n_kmeans is None:
+        n_kmeans = get_best_k(edge_assignments_vec, verbose=verbose, max_k=max_k)
 
-        cluster2num = {tuple(c): i + 1 for i, c in enumerate(clusters)}
-
-        edge_clusters = np.array([cluster2num[tuple(c)] for c in edge_assignments_vec])
-
-    elif method == "kmeans":
-        if n_kmeans is None:
-            n_kmeans = get_best_k(edge_assignments_vec, verbose=verbose, **kwargs)
-
-        kmeans = KMeans(n_clusters=n_kmeans, random_state=0, n_init="auto").fit(
+    kmeans = KMeans(n_clusters=n_kmeans, **kwargs_kmeans1).fit(
             edge_assignments_vec
         )
-        edge_clusters = kmeans.labels_ + 1
+        
+    if undirected:
+        edge_clusters_inter = kmeans.labels_ + 1
 
-        n_clusters = edge_clusters.max()
-        if verbose:
-            print(f"Found {n_clusters} clusters !")
-    else:
-        raise ValueError(
-            "Method not recognized (possible values: partition, sign, kmeans)"
+        # Slower method
+        # angle_signs = np.sign([v.T @ u for u, v in zip(U[:, :n_components].T, V[:, :n_components].T)])
+        # flipped_centers = np.concatenate([kmeans.cluster_centers_[:, n_components:],
+        #                                   kmeans.cluster_centers_[:, :n_components]] * angle_signs, axis=1)
+        angle_signs = np.sign(np.sum(U[:, :n_components] * V[:, :n_components], axis=0))
+        flipped_centers = np.concatenate([
+            kmeans.cluster_centers_[:, n_components:],
+            kmeans.cluster_centers_[:, :n_components]
+        ], axis=1)
+        flipped_centers = flipped_centers * np.concatenate([angle_signs]*2)[None, :]
+
+        dist_mat = cdist(kmeans.cluster_centers_, flipped_centers)
+        row, col = linear_sum_assignment(dist_mat)
+        updated_centroids = (kmeans.cluster_centers_[row] + flipped_centers[col])/2
+
+        if d_thresh > 0:
+            cent_to_keep = np.ones(updated_centroids.shape[0], dtype=bool)
+            is_self = np.array(row == col)
+            row_col = np.vstack([row[~is_self], col[~is_self]])
+            row_col = np.unique(np.array([[r, c] if r < c else [c, r] for r, c in row_col.T]).T, axis=1)
+
+            for r, c in row_col.T:
+                dist = np.linalg.norm(updated_centroids[r] - updated_centroids[c])
+
+                if dist < d_thresh:
+                    updated_centroids[r] = (updated_centroids[r] + updated_centroids[c])/2
+                    cent_to_keep[c] = False
+            updated_centroids = updated_centroids[cent_to_keep]
+
+            if verbose:
+                print(f"Removed {n_kmeans - len(updated_centroids)} centroids after merging !")
+
+        # added_centroids = (updated_centroids[row_col[0]] + updated_centroids[row_col[1]])/2
+        # print(np.allclose(added_centroids[0, :n_components], added_centroids[0, n_components:]*angle_signs))
+        # updated_centroids = np.vstack([updated_centroids, added_centroids])
+        added_centroids = []
+
+        # max_self_dist = dist_mat[is_self, is_self].max()
+        # print(max_self_dist)
+
+        kmeans = KMeans(n_clusters=len(updated_centroids), init=updated_centroids, **kwargs_kmeans2).fit(
+            edge_assignments_vec
         )
+
+        # dist_mat = cdist(kmeans.cluster_centers_[row], kmeans.cluster_centers_[col])
+        # dist_mat2 = cdist(updated_centroids[row], updated_centroids[col])
+        # for i in range(n_kmeans):
+        #     print(row[i], col[i], dist_mat[i, i], dist_mat2[i, i], dist_mat[i, i] < max_self_dist)
+
+    if return_kmeans:
+        # return kmeans, edge_assignments[:, adjacency != 0].T
+        return kmeans, edge_assignments_vec
+
+    edge_clusters = kmeans.labels_ + 1
+
+    if clust_only and undirected:
+        return edge_clusters_inter, edge_clusters
+    
+    n_clusters = edge_clusters.max()
+    if verbose:
+        print(f"Found {n_clusters} clusters !")
 
     edge_clusters_mat = np.zeros((n_nodes, n_nodes), dtype=int)
     edge_clusters_mat[adjacency != 0] = edge_clusters
 
     if return_centroids:
-
         # cluster_centroids = np.zeros((n_clusters, 2, n_components))
         cluster_centroids = kmeans.cluster_centers_.reshape(
             (n_clusters, 2, n_components)
@@ -431,15 +481,17 @@ def get_node_clusters(
             )
 
         if scale:
-            sending_communities = np.nan_to_num(
-                sending_communities / np.sum(edge_clusters_mat > 0, axis=1),
-                posinf=0,
-                neginf=0,
+            sending_communities = np.divide(
+                sending_communities,
+                np.sum(edge_clusters_mat > 0, axis=1),
+                where=np.sum(edge_clusters_mat > 0, axis=1) != 0,
+                out=np.zeros_like(sending_communities),
             )
-            receiving_communities = np.nan_to_num(
-                receiving_communities / np.sum(edge_clusters_mat > 0, axis=0),
-                posinf=0,
-                neginf=0,
+            receiving_communities = np.divide(
+                receiving_communities,
+                np.sum(edge_clusters_mat > 0, axis=0),
+                where=np.sum(edge_clusters_mat > 0, axis=0) != 0,
+                out=np.zeros_like(receiving_communities),
             )
 
         return sending_communities, receiving_communities
@@ -628,3 +680,44 @@ def get_c_pinv(
         )
 
     return C_mat_out, c_pinv_out, C_mat_in, c_pinv_in, bimod_idx
+
+
+def columnwise_corr(pred, truth):
+    # Standardize columns (z-scoring)
+    pred_std = (pred - pred.mean(axis=0)) / pred.std(axis=0)
+    truth_std = (truth - truth.mean(axis=0)) / truth.std(axis=0)
+
+    # Correlation = normalized dot product
+    corr = pred_std.T @ truth_std / (pred.shape[0] - 1)
+    return corr
+
+
+def reorder_corr(c_mat, sort_rows=False, assign="linear", pca_comp=0):
+    n_rows, n_columns = c_mat.shape
+    size = max(n_rows, n_columns)
+    cost = np.zeros((size, size))
+
+    cost[:n_rows, :n_columns] = c_mat
+
+    if "linear" in assign:
+        # Hungarian algorithm
+        row_ind, col_ind = linear_sum_assignment(cost, maximize=True)
+    elif "PCA" in assign:
+        pca = PCA(n_components=pca_comp + 1)
+
+        components = pca.fit_transform(cost)[:, pca_comp]
+        row_ind = np.argsort(components)
+        col_ind = np.arange(n_columns)
+
+    sort = np.argsort(col_ind)
+    if sort_rows:
+        sort = np.argsort(row_ind)
+
+    row_ind = row_ind[sort]
+    col_ind = col_ind[sort]
+    if n_rows < n_columns:
+        row_ind = row_ind[row_ind < n_rows]
+    else:
+        col_ind = col_ind[col_ind < n_columns]
+
+    return cost[row_ind][:, col_ind], row_ind, col_ind

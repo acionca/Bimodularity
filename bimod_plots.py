@@ -719,14 +719,33 @@ def random_circle_patch(n_samples: int, center_offset: tuple = (0, 0), rmax: flo
     return rand
 
 
+def generate_grid_circle(
+    n_samples: int, center_offset: tuple = (0, 0), radius: float = 1.0
+):
+    n_r = 2
+    n_theta = n_samples - 1
+
+    r = np.linspace(0, radius, n_r)
+    theta = np.linspace(0, 2 * np.pi, n_theta, endpoint=False)
+    # r, theta = np.meshgrid(r, theta)
+    theta, r = np.meshgrid(theta, r)
+    x = (r * np.cos(theta)).flatten() + center_offset[0]
+    y = (r * np.sin(theta)).flatten() + center_offset[1]
+    return np.vstack((x, y))[:, n_samples - 2 :]
+    # return x, y
+
+
 def circular_layout(
     n_blocks: int,
     n_per_com: int,
     radius: float = 1,
     small_radius: float = 0.3,
     return_dict: bool = False,
+    even_circles: bool = False,
+    offset: Optional[float] = None,
 ):
-    offset = np.pi * (n_blocks - 2) / (2 * n_blocks)
+    if offset is None:
+        offset = np.pi * (n_blocks - 2) / (2 * n_blocks)
 
     circular_centers = (
         np.array(
@@ -741,9 +760,14 @@ def circular_layout(
         * radius
     )
 
-    circular_pos = np.array(
-        [random_circle_patch(n_per_com, c, small_radius) for c in circular_centers]
-    )
+    if even_circles:
+        circular_pos = np.array(
+            [generate_grid_circle(n_per_com, c, small_radius) for c in circular_centers]
+        )
+    else:
+        circular_pos = np.array(
+            [random_circle_patch(n_per_com, c, small_radius) for c in circular_centers]
+        )
     circular_pos = np.swapaxes(circular_pos, 0, 1).reshape(2, -1)
 
     if return_dict:
