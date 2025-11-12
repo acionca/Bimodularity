@@ -721,3 +721,102 @@ def reorder_corr(c_mat, sort_rows=False, assign="linear", pca_comp=0):
         col_ind = col_ind[col_ind < n_columns]
 
     return cost[row_ind][:, col_ind], row_ind, col_ind
+
+
+def get_ideal_conjugates(send, rec, normalize=True):
+    send_rec = np.concatenate([send, rec], axis=1)
+    conj = np.concatenate([rec, send], axis=1)
+    if normalize:
+        send_rec = send_rec / np.linalg.norm(send_rec, axis=1, keepdims=True)
+        conj = conj / np.linalg.norm(conj, axis=1, keepdims=True)
+
+    return send_rec, conj
+
+def get_unique_conjugates(row, col):
+    row_col = np.vstack([row, col])
+    row_col = np.unique(
+        np.array([[r, c] if r <= c else [c, r] for r, c in row_col.T]).T,
+        axis=1
+        )
+    return row_col
+
+
+def get_conjugates_matching(send, rec, unique=True, return_matrix=False):
+    send_rec, conj = get_ideal_conjugates(send, rec, normalize=True)
+
+    dist = cdist(send_rec, conj, metric="cosine")#'euclidean')
+    row_ind, col_ind = linear_sum_assignment(dist)
+
+    if unique:
+        return get_unique_conjugates(row_ind, col_ind)
+    
+    if return_matrix:
+        return row_ind, col_ind, dist
+
+    return row_ind, col_ind
+
+
+def get_asym_ratio(adj, bicom_masks=None, edge_clusters_mat=None):
+    if bicom_masks is None:
+        bicom_masks = np.array([edge_clusters_mat == (i+1) for i in range(edge_clusters_mat.max())])
+
+    # sum_per_com = (adj * bicom_masks).sum(axis=(1, 2))
+    # count_per_com = (adj * bicom_masks > 0).sum(axis=(1, 2))
+    # mean_per_com = sum_per_com / count_per_com
+
+    ratio = np.zeros(len(bicom_masks), dtype=float)
+    for i, mask in enumerate(bicom_masks):
+        ratio[i] = (adj * mask).mean() / ((adj * mask.T).mean() + (adj * mask).mean())
+    
+    return ratio
+
+
+def get_conjugate_ratio(adj, row_ind, col_ind, bicom_masks=None, edge_clusters_mat=None):
+    if bicom_masks is None:
+        bicom_masks = np.array([edge_clusters_mat == (i+1) for i in range(edge_clusters_mat.max())])
+
+    sum_per_com = (adj * bicom_masks).sum(axis=(1, 2))
+    count_per_com = (adj * bicom_masks > 0).sum(axis=(1, 2))
+    mean_per_com = sum_per_com / count_per_com
+
+    ratio = np.zeros_like(row_ind, dtype=float)
+    for i, _ in enumerate(row_ind):
+        ratio[i] = mean_per_com[row_ind[i]] / (mean_per_com[col_ind[i]] + mean_per_com[row_ind[i]])
+    
+    return ratio
+
+# Permutation Testing
+
+def shuffle_edges(adj, perm_prop, n_shuffle=1, edge_mask=None):
+    if edge_mask is None:
+        edge_mask = adj > 0
+    n_zer_edges = adj[edge_mask]
+
+    n_perm_edges = int(perm_prop * len(n_zer_edges))
+    # shuffled = np.zeros_like(adj)
+    shuffled = np.zeros((n_shuffle, *adj.shape))
+
+    for s in range(n_shuffle):
+        selected_edges = np.random.choice(len(n_zer_edges), size=n_perm_edges, replace=False)
+        perm_edges = n_zer_edges.copy()
+        perm_edges[selected_edges] = np.random.permutation(n_zer_edges[selected_edges])
+
+        shuffled[s, edge_mask] = perm_edges
+
+    return shuffled
+
+def shuffle_edges_sym(adj, perm_prop, n_shuffle=1):
+    triu = np.array(np.triu_indices_from(adj, k=1)).T
+    n_triu = len(triu)
+    n_perm_edges = int(perm_prop * n_triu)
+
+    shuffled = np.repeat(adj[np.newaxis, :, :], n_shuffle, axis=0)
+
+    for s in range(n_shuffle):
+        selected_edges = np.random.choice(n_triu, size=n_perm_edges, replace=False)
+        selected_triu = triu[selected_edges].T
+
+        shuffled[s, selected_triu[0], selected_triu[1]] = adj[selected_triu[1], selected_triu[0]]
+        shuffled[s, selected_triu[1], selected_triu[0]] = adj[selected_triu[0], selected_triu[1]]
+
+    return shuffled

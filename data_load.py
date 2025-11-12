@@ -343,6 +343,68 @@ def load_brain_graph(
     return k_matrix, labels, node_centers
 
 
+def load_bundle_graph(
+    path_to_data="./data/brain",
+    data_suffix="",
+    scale=1,
+    b_prob_threshold=0.0,
+    slines_theshold=0,
+    normalize_slines=False,
+    log_slines=False,
+    verbose=False,
+):
+
+    b_prob_fname = f"{data_suffix}bundle_probability_atlas-scale{scale}.pkl"
+    bundle_prob = load(op.join(path_to_data, b_prob_fname))
+    np.fill_diagonal(bundle_prob, val=0)
+
+    slines_fname = f"{data_suffix}bundle_streamlines_atlas-scale{scale}.pkl"
+    slines_mat = load(op.join(path_to_data, slines_fname))
+    np.fill_diagonal(np.nan_to_num(slines_mat), val=0)
+
+    # Ensure symmetry
+    slines_mat = (slines_mat + slines_mat.T) // 2
+
+    node_centers = load(
+        op.join(path_to_data, f"{data_suffix}roi_centers-ftract-scale{scale}.pkl")
+    )
+
+    try:
+        labels = np.genfromtxt(
+            op.join(path_to_data, f"{data_suffix}brain_labels.csv"), dtype=str
+        )
+    except FileNotFoundError:
+        labels = np.genfromtxt(
+            op.join(path_to_data, f"{data_suffix}brain_labels-scale{scale}.csv"),
+            dtype=str,
+        )
+
+    s_mat = np.zeros_like(slines_mat)
+    if log_slines:
+        s_mat[slines_mat > 1] = np.log(slines_mat[slines_mat > 1])
+    else:
+        s_mat = slines_mat.copy()
+
+    s_mat[bundle_prob < b_prob_threshold] = 0
+    s_mat[slines_mat < slines_theshold] = 0
+
+    if verbose:
+        print(f"There are {len(labels)} nodes in the graph")
+        print(
+            f"{(s_mat > 0).sum()/(slines_mat > 0).sum():.2%} of connections remain after thresholding"
+        )
+
+    if normalize_slines:
+        s_mat = normalize_slines_vol(
+            s_mat,
+            atlas_path=path_to_data,
+            atlas_fname=f"{data_suffix}roi_atlas-ftract-scale{scale}-GM.nii.gz",
+            labels=labels,
+        )
+
+    return s_mat, labels, node_centers
+
+
 def load_nodal_fmri(
     path_to_atlased="/Users/acionca/data/HCP-MIP/atlased",
     atlas="Laus2008_smth6_lp0.15",
@@ -437,3 +499,42 @@ def load_nodal_mat(
         #     paradygm = np.zeros(len(nodal_fmri), dtype=int)
 
         return nodal_fmri, all_lengths  # , paradygm
+
+
+def get_lobe_info(scale, labels, path_to_lobe="./results/atlas_correspondence"):
+    lobe_info = load(op.join(path_to_lobe, f"Laus2018_LobeMNI-scale{scale}OneThal.pkl"))
+    lobe_labels = lobe_info["labels"]
+    maxlobe = np.argmax(lobe_info["dice"], axis=0)
+
+    lobe_df = pd.DataFrame(
+        {
+            "roi_id": np.arange(len(labels)),
+            "roi_name": labels,
+            "lobe_id": maxlobe,
+            "lobe_label": [lobe_labels[ll] for ll in maxlobe],
+        }
+    )
+
+    is_subc = ["subc-rh" in n for n in lobe_df["roi_name"].values]
+    lobe_df.loc[is_subc, "lobe_id"] = 17
+    lobe_df.loc[is_subc, "lobe_label"] = "rh-subcortical"
+    lobe_labels[17] = "rh-subcortical"
+
+    is_subc = ["subc-lh" in n for n in lobe_df["roi_name"].values]
+    lobe_df.loc[is_subc, "lobe_id"] = 8
+    lobe_df.loc[is_subc, "lobe_label"] = "lh-subcortical"
+    lobe_labels[8] = "lh-subcortical"
+
+    lobe_df.loc[lobe_df.roi_name == "Brain_Stem", "lobe_id"] = 18
+    lobe_df.loc[lobe_df.roi_name == "Brain_Stem", "lobe_label"] = "brainstem"
+    lobe_labels.append("brainstem")
+
+    new_order = [2, 5, 4, 7, 3, 8, 11, 14, 13, 16, 12, 17, 18]
+    reorder_ids = {old_id: new_id for new_id, old_id in enumerate(new_order)}
+
+    lobe_df["lobe_id_reorder"] = lobe_df["lobe_id"].map(reorder_ids)
+    order_by_lobe = np.argsort(lobe_df["lobe_id_reorder"].values)
+    lobe_sizes = lobe_df["lobe_id_reorder"].value_counts().sort_index().values
+    lobe_labels = [lobe_labels[old_id] for old_id in new_order]
+
+    return order_by_lobe, lobe_sizes, lobe_labels, lobe_df

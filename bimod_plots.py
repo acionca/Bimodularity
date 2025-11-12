@@ -807,3 +807,41 @@ def graph_signal_gif(
         ani.save(op.join(figure_loc, gif_name), writer=writer)
 
     plt.show()
+
+
+def plot_lobe_lines(
+    axes,
+    lobe_sizes,
+    lobe_labels,
+    draw_grid=True,
+    plot_labels=True,
+    y_only=False,
+    grid_color="w",
+    grid_lw=1,
+    fontsize=12,
+):
+    lobe_cumsum = np.concatenate([[0], np.cumsum(lobe_sizes)])
+
+    if draw_grid:
+        for l_s in lobe_cumsum[1:-1]:
+            axes.axhline(l_s - 0.5, color=grid_color, lw=grid_lw)
+            axes.axvline(l_s - 0.5, color=grid_color, lw=grid_lw)
+
+    if plot_labels:
+        tick_pos = lobe_cumsum[:-1] + (np.diff(lobe_cumsum) / 2)
+        tick_pos = tick_pos[:-1]  # removing brainstem
+
+        plot_labs = lobe_labels[:-1]
+        plot_labs = [lab.replace("_lobe", "").replace("-", " ") for lab in plot_labs]
+
+        if not y_only:
+            axes.set_xticks(tick_pos, labels=plot_labs, rotation=70)
+        axes.set_yticks(tick_pos, labels=plot_labs)
+        axes.tick_params(
+            labelsize=fontsize,
+            labelbottom=False,
+            bottom=False,
+            labeltop=True,
+            top=True,
+        )
+    return axes

@@ -1,9 +1,77 @@
+from hmac import new
 import os.path as op
 
 import numpy as np
 
 import h5py
 import nibabel as nib
+
+
+def fix_thalamus(labels, matrix=None, atlas_data=None, pos=None, use_max=False):
+
+    # Average the Thalamus SubRegions
+    is_r_thal = ["thal-rh-" in lab for lab in labels]
+    is_l_thal = ["thal-lh-" in lab for lab in labels]
+
+    r_thal_idx = np.where(is_r_thal)[0]
+    l_thal_idx = np.where(is_l_thal)[0]
+
+    remove_dupl = np.logical_or(is_r_thal, is_l_thal)
+    remove_dupl[r_thal_idx.min()] = False
+    remove_dupl[l_thal_idx.min()] = False
+
+    new_labels = labels.copy()
+    new_labels[r_thal_idx] = "subc-rh-thalamus"
+    new_labels[l_thal_idx] = "subc-lh-thalamus"
+    new_labels = new_labels[~remove_dupl]
+
+    if pos is None and matrix is None and atlas_data is None:
+        return new_labels
+
+    if pos is not None:
+        new_pos = pos.copy()
+        new_pos[r_thal_idx] = pos[r_thal_idx].mean(axis=0, keepdims=True)
+        new_pos[l_thal_idx] = pos[l_thal_idx].mean(axis=0, keepdims=True)
+        new_pos = new_pos[~remove_dupl]
+
+        if matrix is None and atlas_data is None:
+            return new_labels, new_pos
+
+    if matrix is not None:
+        new_matrix = matrix.copy()
+
+        if use_max:
+            new_matrix[is_r_thal, :] = matrix[is_r_thal, :].max(axis=0, keepdims=True)
+            new_matrix[is_l_thal, :] = matrix[is_l_thal, :].max(axis=0, keepdims=True)
+            new_matrix[:, is_r_thal] = matrix[:, is_r_thal].max(axis=1, keepdims=True)
+            new_matrix[:, is_l_thal] = matrix[:, is_l_thal].max(axis=1, keepdims=True)
+        else:
+            new_matrix[is_r_thal, :] = matrix[is_r_thal, :].mean(axis=0, keepdims=True)
+            new_matrix[is_l_thal, :] = matrix[is_l_thal, :].mean(axis=0, keepdims=True)
+            new_matrix[:, is_r_thal] = matrix[:, is_r_thal].mean(axis=1, keepdims=True)
+            new_matrix[:, is_l_thal] = matrix[:, is_l_thal].mean(axis=1, keepdims=True)
+
+        new_matrix = matrix[~remove_dupl, :][:, ~remove_dupl]
+        if atlas_data is None:
+            return new_labels, new_matrix
+
+    if atlas_data is not None:
+        new_atlas_data = atlas_data.copy()
+
+        for i in r_thal_idx:
+            new_atlas_data[atlas_data == i + 1] = r_thal_idx.min() + 1
+
+        r_remove = len(r_thal_idx) - 1
+        new_atlas_data[new_atlas_data > r_thal_idx.min() + 1] -= r_remove
+        for i in l_thal_idx:
+            new_atlas_data[atlas_data == i + 1] = l_thal_idx.min() + 1 - r_remove
+        new_atlas_data[new_atlas_data > l_thal_idx.min() + 1] -= len(l_thal_idx) - 1
+        if matrix is None:
+            return new_labels, new_atlas_data, new_pos
+        if pos is None:
+            return new_labels, new_matrix, new_atlas_data
+
+    return new_labels, new_matrix, new_atlas_data, new_pos
 
 
 def get_bundle_data(
