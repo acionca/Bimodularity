@@ -5,13 +5,18 @@ from typing import Optional, Union
 import numpy as np
 from scipy.linalg import svd
 import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.metrics import silhouette_score
 from sklearn.metrics.cluster import adjusted_rand_score
 from sklearn.decomposition import PCA
 
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
+from scipy.cluster.hierarchy import linkage, fcluster
+from scipy.spatial.distance import squareform
+from scipy.sparse import csr_matrix, lil_matrix, dok_matrix
+
+from joblib import Parallel, delayed
 
 from graph_examples import toy_random
 
@@ -766,7 +771,12 @@ def get_asym_ratio(adj, bicom_masks=None, edge_clusters_mat=None):
 
     ratio = np.zeros(len(bicom_masks), dtype=float)
     for i, mask in enumerate(bicom_masks):
-        ratio[i] = (adj * mask).mean() / ((adj * mask.T).mean() + (adj * mask).mean())
+        vals = adj[mask]
+        valsT = adj[mask.T]
+        # ratio[i] = vals[~np.isnan(vals)].mean() / (vals[~np.isnan(vals)].mean() + valsT[~np.isnan(valsT)].mean())
+        ratio[i] = np.divide(vals[~np.isnan(vals)].mean(),
+                             (vals[~np.isnan(vals)].mean() + valsT[~np.isnan(valsT)].mean()),
+                             where=(vals[~np.isnan(vals)].mean() + valsT[~np.isnan(valsT)].mean()) != 0)
     
     return ratio
 
@@ -778,6 +788,7 @@ def get_conjugate_ratio(adj, row_ind, col_ind, bicom_masks=None, edge_clusters_m
     sum_per_com = (adj * bicom_masks).sum(axis=(1, 2))
     count_per_com = (adj * bicom_masks > 0).sum(axis=(1, 2))
     mean_per_com = sum_per_com / count_per_com
+    mean_per_com[count_per_com < 1e-10] = 1e-10
 
     ratio = np.zeros_like(row_ind, dtype=float)
     for i, _ in enumerate(row_ind):
@@ -820,3 +831,79 @@ def shuffle_edges_sym(adj, perm_prop, n_shuffle=1):
         shuffled[s, selected_triu[1], selected_triu[0]] = adj[selected_triu[0], selected_triu[1]]
 
     return shuffled
+
+
+def _get_cons_chunk(run_labels):
+    n_samples = run_labels.shape[0]
+
+    uniq, inv = np.unique(run_labels, return_inverse=True)
+    k = uniq.size
+    rows = np.arange(n_samples)
+    cols = inv
+    # build sparse indicator H (n_samples x k)
+    H = csr_matrix((np.ones(n_samples, dtype=np.int8), (rows, cols)), shape=(n_samples, k))
+    # co-occurrence (sparse)
+    C = (H @ H.T).tocoo()
+    # add only nonzero entries
+    # consensus[C.row, C.col] += C.data
+
+    return C.row, C.col, C.data
+
+
+def consensus_matrix(all_labels, reorder=False, consensus_labels=False, consensus_k=None, fast=False,
+                     njobs: int = 1):
+    n_runs, n_samples = all_labels.shape
+
+    consensus = np.zeros((n_samples, n_samples), dtype=np.int8)
+    # consensus = csr_matrix((n_samples, n_samples), dtype=np.int8)
+    labels = None
+    
+    if njobs > 1:
+        results = Parallel(n_jobs=njobs, return_as="generator_unordered")(
+            delayed(_get_cons_chunk)(run_labels) for run_labels in all_labels
+        )
+        for r, c, d in results:
+            consensus[r, c] += d
+    else:
+        for run_labels in all_labels:
+            r, c, d = _get_cons_chunk(run_labels)
+            consensus[r, c] += d
+
+    # 42 seconds with division and 18 seconds without !
+    if consensus_labels:
+        # consensus = consensus.astype(float) / n_runs
+        # dist = 1 - consensus
+
+        dist = n_runs - consensus
+
+        if consensus_k is None:
+            consensus_k = all_labels.max() + 1
+        
+        cons_linkage = linkage(squareform(dist), method="average")
+        labels = fcluster(cons_linkage, consensus_k, criterion="maxclust")
+    
+    if reorder:
+        reorder_id = np.argsort(labels)
+        consensus = consensus[reorder_id][:, reorder_id]
+
+    return consensus, labels
+
+
+def consensus_score(consensus_matrix, consensus_label, is_sorted=False):
+    if is_sorted:
+        sorted_lab = np.sort(consensus_label)
+    else:
+        sorted_lab = consensus_label.copy()
+    # sorted_lab = np.sort(consensus_label)
+    within_mask = (sorted_lab[:, None] == sorted_lab[None, :])
+    between_mask = ~within_mask
+
+    within_vals = consensus_matrix[within_mask]
+    between_vals = consensus_matrix[between_mask]
+    
+    # Not deflating the between values by the many zeros
+    between_vals = between_vals[between_vals > 0]
+    within_vals = within_vals[within_vals > 0]
+
+    # return np.mean(within_vals, where=within_mask > 0), np.mean(between_vals, where=between_mask > 0)
+    return np.mean(within_vals), np.mean(between_vals)

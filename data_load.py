@@ -66,10 +66,8 @@ def get_aggprop(h5dict: h5py._hl.files.File, property: str):
         The array containing the requested property values.
     """
 
-    try:
-        ret = np.array(h5dict.get("matrices").get(property))
-    except:
-        print("Not valid property OR h5 not opened")
+    ret = np.array(h5dict.get("matrices").get(property))
+
     return ret
 
 
@@ -312,7 +310,8 @@ def load_brain_graph(
     if verbose:
         print(f"There are {len(labels)} nodes in the graph")
         print(
-            f"{(s_mat > 0).sum()/(slines_mat > 0).sum():.2%} of connections remain after thresholding"
+            f"{(s_mat > 0).sum()/(slines_mat > 0).sum():.2%} of connections ",
+            "remain after thresholding",
         )
 
     if normalize_slines and use_delay:
@@ -391,7 +390,8 @@ def load_bundle_graph(
     if verbose:
         print(f"There are {len(labels)} nodes in the graph")
         print(
-            f"{(s_mat > 0).sum()/(slines_mat > 0).sum():.2%} of connections remain after thresholding"
+            f"{(s_mat > 0).sum()/(slines_mat > 0).sum():.2%} of connections remain",
+            " after thresholding",
         )
 
     if normalize_slines:
@@ -403,6 +403,28 @@ def load_bundle_graph(
         )
 
     return s_mat, labels, node_centers
+
+
+def get_ec_data(
+    scale,
+    path_to_ec="./results/atlas_correspondence",
+    fix_thal=True,
+    remove_neg=True,
+    verbose=False,
+):
+    fname = f"Laus2018_EffConnFromSch414-scale{scale}{'OneThal'*fix_thal}.pkl"
+    ec_data = load(op.join(path_to_ec, fname))
+    ec_mat = ec_data["conv"]
+
+    if remove_neg:
+        if verbose:
+            print(
+                f"Removing {np.sum(ec_mat < 0)/ec_mat.size*100:.2f}% negative weights"
+                " from EC matrix",
+            )
+        ec_mat[ec_mat < 0] = 0
+
+    return ec_mat
 
 
 def load_nodal_fmri(
@@ -538,3 +560,36 @@ def get_lobe_info(scale, labels, path_to_lobe="./results/atlas_correspondence"):
     lobe_labels = [lobe_labels[old_id] for old_id in new_order]
 
     return order_by_lobe, lobe_sizes, lobe_labels, lobe_df
+
+
+def get_ftract_data(path_to_ftract, scale, maxdelay=50, feature="peak_delay"):
+    scale2nroi = {1: 33, 2: 60, 3: 125, 4: 250}
+    path_to_feat = op.join(
+        path_to_ftract, f"Lausanne2008-{scale2nroi[scale]}/15_inf/{maxdelay}"
+    )
+
+    # /Users/acionca/data/F-TRACT-Lausanne2008/Lausanne2008-125/Lausanne2008-125_2018.txt
+    ftract_labels = np.genfromtxt(
+        op.join(
+            path_to_ftract,
+            f"Lausanne2008-{scale2nroi[scale]}/Lausanne2008-{scale2nroi[scale]}_2018.txt",
+        ),
+        dtype=str,
+    )
+
+    path_to_prob = op.join(path_to_feat, "probability_2018.txt")
+    prob = np.genfromtxt(path_to_prob)
+
+    # max_peak_delay_50__zth5/min_value_gen__0/feature_peak_delay_zth5/nan_median_abs_deviation.txt_2018.gz
+    delay = np.genfromtxt(
+        op.join(
+            path_to_feat,
+            f"max_peak_delay_{maxdelay}__zth5",
+            "min_value_gen__0",
+            f"feature_{feature}_zth5",
+            "nan_median_abs_deviation.txt_2018.gz",
+        )
+    )
+
+    delay = np.nan_to_num(delay)
+    return prob, delay, ftract_labels

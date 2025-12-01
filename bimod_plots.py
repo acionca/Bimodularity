@@ -4,6 +4,7 @@
 from matplotlib import animation
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpecFromSubplotSpec
+from matplotlib.lines import Line2D
 
 import numpy as np
 from scipy.linalg import block_diag
@@ -15,23 +16,57 @@ from typing import Optional
 from matplotlib.axes import Axes
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch
-from matplotlib.colors import to_rgb, to_rgba, ListedColormap
+from matplotlib.colors import to_rgb, to_rgba, ListedColormap, LinearSegmentedColormap
 from matplotlib.patheffects import withStroke
 
-import dgsp
+from dipy.viz import window, actor
+from nilearn.datasets import fetch_surf_fsaverage
+from nilearn.surface import load_surf_mesh
 
-PALETTE = ["#FFADAD", "#A0C4FF", "#CAFFBF", "#FFC6FF"]
+import dgsp
+from palettes import CLUSTER, CLUSTER_CB, CLUSTER_SOFT, DIV_RB, EXTENDED_NCAR, PASTEL
+
+
+def get_all_cmaps():
+    all_colors = [
+        CLUSTER,
+        CLUSTER_CB,
+        CLUSTER_SOFT,
+        DIV_RB,
+        EXTENDED_NCAR,
+    ]
+    cmap_names = [
+        "cluster_palette",
+        "cluster_palette_cb",
+        "cluster_palette_soft",
+        "div_rb",
+        "extended_ncar",
+    ]
+
+    fig, axes = plt.subplots(figsize=(8, 2))
+    x_plot = np.linspace(0, 1, 256)
+
+    cmaps = {}
+    for i, (name, cmap) in enumerate(zip(cmap_names, all_colors)):
+        cmap = LinearSegmentedColormap.from_list("colors", cmap)
+        cmaps[name] = cmap
+        axes.scatter(
+            x_plot, np.ones_like(x_plot) * i, c=cmap(x_plot), marker="o", s=100
+        )
+    axes.set_yticks(np.arange(len(cmap_names)), labels=cmap_names)
+    axes.set_xticks([])
+
+    return cmaps
 
 
 def plot_palette():
-    palette_rgb = [to_rgb(color) for color in PALETTE]
-
+    palette_rgb = [to_rgb(color) for color in PASTEL]
     plt.scatter([0, 1, 2, 3], [0] * 4, c=palette_rgb, s=400, edgecolors="k", lw=2)
 
 
 def get_custom_cmap() -> ListedColormap:
 
-    palette_rgb = [to_rgb(color) for color in PALETTE]
+    palette_rgb = [to_rgb(color) for color in PASTEL]
 
     custom_cmap = ListedColormap([(0, 0, 0), (1, 1, 1)] + palette_rgb)
 
@@ -181,8 +216,8 @@ def plot_community_scheme(
     colors = "none"
     if use_cmap:
         palette_indices = [3, 2, 1, 0]
-        colors = [to_rgba(PALETTE[color_i], alpha=0.5) for color_i in palette_indices]
-        # colors = [to_rgba(color, alpha=0.5) for color in PALETTE]
+        colors = [to_rgba(PASTEL[color_i], alpha=0.5) for color_i in palette_indices]
+        # colors = [to_rgba(color, alpha=0.5) for color in PASTEL]
 
     ax.scatter(
         xy_pos[:, 0],
@@ -384,7 +419,7 @@ def plot_spectrum(
             angle = U[:, i] @ V[:, i]
             # node_colors.append(angle)
             col_id = 1 - (np.sign(angle) + 1) // 2
-            node_colors.append(PALETTE[col_id.astype(int)])
+            node_colors.append(PASTEL[col_id.astype(int)])
 
     # Figure A (eigenvalues)
 
@@ -436,7 +471,7 @@ def plot_spectrum(
                 marker="s",
                 lw=4,
                 ms=22,
-                # color=PALETTE[0],
+                # color=PASTEL[0],
                 color=node_colors[vector_id],
                 markeredgecolor="k",
                 markeredgewidth=4,
@@ -464,7 +499,7 @@ def plot_spectrum(
             marker="s",
             lw=4,
             ms=14,
-            # color=PALETTE[0],
+            # color=PASTEL[0],
             color=node_colors[vector_id],
             markeredgecolor="k",
             markeredgewidth=2,
@@ -602,7 +637,7 @@ def plot_graph_embedding(
 
     if use_cmap:
         if node_clusers is None:
-            palette_rgb = [to_rgb(color) for color in PALETTE]
+            palette_rgb = [to_rgb(color) for color in PASTEL]
             colors = [palette_rgb[i // n_per_com] for i in np.arange(n_nodes)]
         else:
             try:
@@ -644,7 +679,7 @@ def plot_graph_embedding(
                 fontsize=26 * fontscale,
                 color="k",
                 # color="w",
-                # color=PALETTE[com_i],
+                # color=PASTEL[com_i],
                 fontweight="bold",
                 path_effects=[
                     withStroke(
@@ -652,7 +687,7 @@ def plot_graph_embedding(
                         foreground="w",
                         alpha=0.8,
                         # foreground="k",
-                        # foreground=PALETTE[com_i],
+                        # foreground=PASTEL[com_i],
                     )
                 ],
                 ha="center",
@@ -819,13 +854,16 @@ def plot_lobe_lines(
     grid_color="w",
     grid_lw=1,
     fontsize=12,
+    no_insula=False,
 ):
     lobe_cumsum = np.concatenate([[0], np.cumsum(lobe_sizes)])
 
     if draw_grid:
         for l_s in lobe_cumsum[1:-1]:
-            axes.axhline(l_s - 0.5, color=grid_color, lw=grid_lw)
-            axes.axvline(l_s - 0.5, color=grid_color, lw=grid_lw)
+            axes.axhline(l_s, color=grid_color, lw=grid_lw)
+            axes.axvline(l_s, color=grid_color, lw=grid_lw)
+            # axes.axhline(l_s - 0.5, color=grid_color, lw=grid_lw)
+            # axes.axvline(l_s - 0.5, color=grid_color, lw=grid_lw)
 
     if plot_labels:
         tick_pos = lobe_cumsum[:-1] + (np.diff(lobe_cumsum) / 2)
@@ -834,8 +872,11 @@ def plot_lobe_lines(
         plot_labs = lobe_labels[:-1]
         plot_labs = [lab.replace("_lobe", "").replace("-", " ") for lab in plot_labs]
 
+        if no_insula:
+            plot_labs = [lab if "insul" not in lab else "" for lab in plot_labs]
+
         if not y_only:
-            axes.set_xticks(tick_pos, labels=plot_labs, rotation=70)
+            axes.set_xticks(tick_pos, labels=plot_labs, rotation=-40, ha="right")
         axes.set_yticks(tick_pos, labels=plot_labs)
         axes.tick_params(
             labelsize=fontsize,
@@ -845,3 +886,218 @@ def plot_lobe_lines(
             top=True,
         )
     return axes
+
+
+def plot_summary_graph(
+    summary,
+    labels,
+    axes,
+    cmap,
+    e_strength: float = 5.0,
+    scatter_size: float = 400,
+    pos: dict = None,
+    text: bool = False,
+):
+    sum_graph = nx.DiGraph(summary)
+    edges = sum_graph.edges()
+
+    e_str = np.array([summary[i, j] for i, j in edges])
+    e_str = e_strength * e_str / e_str.max()
+
+    if pos is None:
+        pos = nx.spring_layout(sum_graph)
+        pos = nx.kamada_kawai_layout(sum_graph)
+
+    pos_array = np.array(list(pos.values()))
+
+    net_colors = cmap.resampled(len(labels) + 1)
+    axes.scatter(
+        pos_array[:, 0],
+        pos_array[:, 1],
+        s=scatter_size,
+        zorder=3,
+        c=np.arange(len(labels)) + 1,
+        cmap=net_colors,
+        edgecolor="k",
+        linewidth=2,
+        vmin=0,
+    )
+    _ = nx.draw_networkx_edges(
+        sum_graph,
+        pos,
+        ax=axes,
+        arrowstyle="-|>",
+        arrowsize=30,
+        edge_color="k",
+        edgelist=edges,
+        alpha=1,
+        width=e_str,
+        connectionstyle="arc3,rad=0.3",  # ,angleA=-80,angleB=10",
+        # connectionstyle="angle3,angleA=50,angleB=-40",
+    )
+    #    connectionstyle='arc,angleA=0.2,angleB=0.2,rad=0.5')
+
+    handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            label=labels[i],
+            markerfacecolor=net_colors(i + 1),
+            markersize=10,
+        )
+        for i in range(len(labels))
+    ]
+
+    if text:
+        # Handling overlapping text labels
+        texty = pos_array[:, 1] + 0.05
+        textdiff = texty[None, :] - texty[:, None]
+        i_over, j_over = np.array(np.where(np.abs(textdiff) < 0.05))
+        for i, j in zip(i_over, j_over):
+            if i != j:
+                texty[j] += 0.02 * np.sign(textdiff[i, j])
+
+        for i, label in enumerate(labels):
+            axes.text(
+                pos_array[i, 0],
+                texty[i],
+                label,
+                fontsize=14,
+                # fontweight="bold",
+                ha="center",
+                va="center",
+                color=net_colors(i + 1),
+                path_effects=[
+                    withStroke(
+                        linewidth=2,
+                        foreground="k",
+                        alpha=1,
+                    )
+                ],
+            )
+    else:
+        axes.legend(handles=handles, ncols=2, fontsize=14)
+
+
+def get_camera_pos(view="transverse"):
+    if (view == "transverse") or ("tra" in view):
+        yoffset = -15
+        position = (0, yoffset, 350)
+        focal_point = (0, yoffset, 0)
+        view_up = (0.0, 0.0, 0.0)
+    elif (view == "sagittal") or ("sag" in view):
+        yoffset = -18
+        position = (350, yoffset, 0)
+        focal_point = (0, yoffset, 0)
+        view_up = (0.0, 0.0, 1.0)
+    elif (view == "coronal") or ("cor" in view):
+        zoffset = 10
+        position = (0, -310, zoffset)
+        focal_point = (0, 0, zoffset)
+        view_up = (0.0, 0.0, 1.0)
+    elif view == "custom":
+        angle = np.deg2rad(-35)
+        dist = 300
+        posx = dist * np.sin(angle)
+        posy = dist * np.cos(angle)
+        position = (posx, posy, 80)
+        # position = (-350, 350, 0)
+        focal_point = (30, -50, 0)
+        view_up = (0.0, 0.0, 1.0)
+    else:
+        raise ValueError(f"Unknown view: {view}")
+
+    return position, focal_point, view_up
+
+
+def get_brain_actors(opacity=0.3):
+    fsaverage = fetch_surf_fsaverage()
+
+    brain_actors = []
+    for surf in ["pial_left", "pial_right"]:
+        coords, faces = load_surf_mesh(fsaverage[surf])
+        surf_act = actor.surface(coords, faces, smooth="loop")
+        surf_act.GetProperty().SetOpacity(opacity)
+        brain_actors.append(surf_act)
+
+    return brain_actors
+
+
+def get_tube_actor(tractogram, cmap, n_kept=1, n_colors=13, linewidth=0.5):
+
+    sline_cmap = cmap.resampled(n_colors)
+
+    colors = np.array(
+        [
+            sline_cmap((6 * (1 + sl)).astype(int))
+            for sl in tractogram.data_per_point["send"]
+        ]
+    )
+    if n_kept == 1:
+        colors = colors[:, 0, :3]
+    else:
+        colors = colors[:, :, 0, :3]
+
+    # Add actors to the scene
+    # stream_actor = actor.line(streamlines, colors=np.asarray(colors, dtype=object), linewidth=2)
+
+    return actor.streamtube(
+        tractogram.streamlines,
+        colors=np.asarray(colors, dtype=object),
+        linewidth=linewidth,
+    )
+
+
+def plot_bundle_surf(
+    tube_actor, brain_actors, view=None, axes=None, overlay_slines=False
+):
+
+    if axes is None:
+        fig, axes = plt.subplots(figsize=(8, 8))
+    scene = window.Scene()
+
+    # White background
+    scene.SetBackground((1, 1, 1))
+
+    for surf_act in brain_actors:
+        scene.add(surf_act)
+
+    if not overlay_slines:
+        # scene.add(stream_actor)
+        scene.add(tube_actor)
+
+    if view is not None:
+        position, focal_point, view_up = get_camera_pos(view=view)
+    else:
+        position = (0, 0, 350)
+        focal_point = (0, -15, 0)
+        view_up = (0.0, 0.0, 0.0)
+
+    scene.set_camera(position=position, focal_point=focal_point, view_up=view_up)
+    win = window.snapshot(scene, size=(2000, 2000), offscreen=True)
+    win = np.ascontiguousarray(win)
+
+    axes.imshow(win)
+
+    if overlay_slines:
+        scene2 = window.Scene()
+        scene2.SetBackground((1, 1, 1))
+        scene2.add(tube_actor)
+
+        if view is not None:
+            position, focal_point, view_up = get_camera_pos(view=view)
+        else:
+            position = (0, 0, 350)
+            focal_point = (0, -15, 0)
+            view_up = (0.0, 0.0, 0.0)
+
+        scene2.set_camera(position=position, focal_point=focal_point, view_up=view_up)
+        win = window.snapshot(scene2, size=(2000, 2000), offscreen=True)
+        win = np.ascontiguousarray(win)
+
+        win_mask = ((win == (255, 255, 255)).sum(axis=-1) < 3).astype(float)
+        win = np.concatenate([win, 255 * win_mask[:, :, None]], axis=-1).astype(int)
+
+        axes.imshow(win)
