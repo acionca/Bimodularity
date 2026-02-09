@@ -15,8 +15,12 @@ from scipy.spatial.distance import cdist
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
 from scipy.sparse import csr_matrix, lil_matrix, dok_matrix
+from scipy.stats import spearmanr
+
+from pingouin import corr as p_corr
 
 from joblib import Parallel, delayed
+from tqdm.notebook import tqdm
 
 from graph_examples import toy_random
 
@@ -428,17 +432,34 @@ def edge_bicommunities(
     return edge_clusters, edge_clusters_mat
 
 
-def get_best_k(X, max_k=10, verbose=False, return_silhouette=False):
+def get_best_k(X, max_k=10, verbose=False, return_silhouette=False, parallel=False, n_init=100):
     print(f"Running silhouette analysis for k = 2 to {max_k} ...")
     n_clusters = np.arange(2, max_k)
     silhouette = np.zeros(n_clusters.shape[0])
 
-    for i, n in enumerate(n_clusters):
-        kmeans = KMeans(n_clusters=n, random_state=0, n_init="auto").fit(X)
-        silhouette[i] = silhouette_score(X, kmeans.labels_)
+    if parallel:
+        print(f"Using parallel computation ...")
+        def _get_silhouette(n, data):
+            kmeans = KMeans(n_clusters=n, init="random", n_init=n_init).fit(data)
+            return silhouette_score(data, kmeans.labels_)
+        
+        count = tqdm(total=len(n_clusters))
+        par = Parallel(n_jobs=np.min([10, len(n_clusters)]), return_as="generator")
+        gen_res = par(delayed(_get_silhouette)(n, X) for n in n_clusters)
 
-        if verbose:
-            print(f"Silhouette score for K={n} is : {silhouette[i]:1.3f}")
+        for i, sil in enumerate(gen_res):
+            silhouette[i] = sil
+            count.update(1)
+        count.close()
+
+    else:
+        for i, n in enumerate(n_clusters):
+            # kmeans = KMeans(n_clusters=n, random_state=0, n_init="auto").fit(X)
+            kmeans = KMeans(n_clusters=n, init="random", n_init=n_init).fit(X)
+            silhouette[i] = silhouette_score(X, kmeans.labels_)
+
+            if verbose:
+                print(f"Silhouette score for K={n} is : {silhouette[i]:1.3f}")
 
     print(
         f"Best average silhouette_score is : {np.max(silhouette):1.2f} for K={n_clusters[np.argmax(silhouette)]}"
@@ -761,24 +782,56 @@ def get_conjugates_matching(send, rec, unique=True, return_matrix=False):
     return row_ind, col_ind
 
 
-def get_asym_ratio(adj, bicom_masks=None, edge_clusters_mat=None):
+def get_asym_ratio(adj, bicom_masks=None, edge_clusters_mat=None, use_median=True, fast=True):
     if bicom_masks is None:
         bicom_masks = np.array([edge_clusters_mat == (i+1) for i in range(edge_clusters_mat.max())])
+
+    if use_median:
+        agg_func = np.median
+    else:
+        agg_func = np.mean
+
+    if fast:
+        if bicom_masks.ndim == 3:
+            bicom_masks = bicom_masks[:, adj != 0]
+        bicom_vals = [adj[bm] for bm in bicom_masks]
+        ratio = np.array([agg_func(bv[~np.isnan(bv)]) for bv in bicom_vals])
+
+        return ratio
+    else:
 
     # sum_per_com = (adj * bicom_masks).sum(axis=(1, 2))
     # count_per_com = (adj * bicom_masks > 0).sum(axis=(1, 2))
     # mean_per_com = sum_per_com / count_per_com
 
-    ratio = np.zeros(len(bicom_masks), dtype=float)
-    for i, mask in enumerate(bicom_masks):
-        vals = adj[mask]
-        valsT = adj[mask.T]
-        # ratio[i] = vals[~np.isnan(vals)].mean() / (vals[~np.isnan(vals)].mean() + valsT[~np.isnan(valsT)].mean())
-        ratio[i] = np.divide(vals[~np.isnan(vals)].mean(),
-                             (vals[~np.isnan(vals)].mean() + valsT[~np.isnan(valsT)].mean()),
-                             where=(vals[~np.isnan(vals)].mean() + valsT[~np.isnan(valsT)].mean()) != 0)
-    
-    return ratio
+        ratio = np.zeros(len(bicom_masks), dtype=float)
+        for i, mask in enumerate(bicom_masks):
+            vals = adj[mask]
+            # valsT = adj[mask.T]
+
+            nanmask = np.isnan(vals)
+            # nanmask = np.logical_or(np.isnan(vals), np.isnan(valsT))
+            if sum(~nanmask) == 0:
+                ratio[i] = np.nan
+                continue
+
+            # vals = vals[~nanmask]
+            # valsT = valsT[~nanmask]
+            # ratio[i] = agg_func(vals / (vals + valsT))
+            vals = vals[~nanmask]
+            ratio[i] = agg_func(vals)
+            
+            # vals = agg_func(vals[~np.isnan(vals)])
+            # valsT = agg_func(valsT[~np.isnan(valsT)])
+
+            # ratio[i] = vals[~np.isnan(vals)].mean() / (vals[~np.isnan(vals)].mean() + valsT[~np.isnan(valsT)].mean())
+            # ratio[i] = np.divide(vals[~np.isnan(vals)].mean(),
+            #                      (vals[~np.isnan(vals)].mean() + valsT[~np.isnan(valsT)].mean()),
+            #                      where=(vals[~np.isnan(vals)].mean() + valsT[~np.isnan(valsT)].mean()) != 0)
+            
+            # ratio[i] = vals / (vals + valsT) if (vals + valsT) != 0 else np.nan
+        
+        return ratio
 
 
 def get_conjugate_ratio(adj, row_ind, col_ind, bicom_masks=None, edge_clusters_mat=None):
@@ -795,6 +848,56 @@ def get_conjugate_ratio(adj, row_ind, col_ind, bicom_masks=None, edge_clusters_m
         ratio[i] = mean_per_com[row_ind[i]] / (mean_per_com[col_ind[i]] + mean_per_com[row_ind[i]])
     
     return ratio
+
+
+def get_bicom_ratio(adj, labels, ft_mat, ec_mat, use_median=True, use_spearman=False, use_beta=False, return_scatter=False, fast=False, corr_type=None):
+    e_mat = np.zeros_like(adj, dtype=int)
+    e_mat[adj != 0] = labels
+
+    if fast:
+        bi_masks = np.array([labels == (i+1) for i in range(labels.max())])
+    else:
+        bi_masks = np.array([e_mat == (i+1) for i in range(labels.max())])
+
+    if fast:
+        ft_ratio = get_asym_ratio(ft_mat[adj != 0], bicom_masks=bi_masks, use_median=use_median, fast=fast)
+        ec_ratio = get_asym_ratio(ec_mat[adj != 0], bicom_masks=bi_masks, use_median=use_median, fast=fast)
+    else:
+        ft_ratio = get_asym_ratio(ft_mat, bicom_masks=bi_masks, use_median=use_median, fast=fast)
+        ec_ratio = get_asym_ratio(ec_mat, bicom_masks=bi_masks, use_median=use_median, fast=fast)
+
+    nanratio = np.logical_or(np.isnan(ft_ratio), np.isnan(ec_ratio))
+    ft_ratio = ft_ratio[~nanratio]
+    ec_ratio = ec_ratio[~nanratio]
+
+    n_nans = nanratio.sum()
+    # if n_nans == len(nanratio):
+    #     print("All ratios are NaN !")
+    # if len(ec_ratio) < 2:
+    #     print("Not enough valid ratios to compute correlation !")
+    # if np.any(np.isnan(ft_ratio)) or np.any(np.isnan(ec_ratio)):
+    #     print("Some ratios are NaN !")
+
+    if corr_type is not None:
+        corr = p_corr(ft_ratio, ec_ratio, method=corr_type)['r'].values[0]
+    else:
+        if use_spearman:
+            corr = spearmanr(ft_ratio, ec_ratio).correlation
+        elif use_beta:
+            from sklearn.linear_model import LinearRegression
+            corr = LinearRegression().fit(ec_ratio[:,None], ft_ratio).coef_[0]
+        else:
+            corr = np.corrcoef(ft_ratio, ec_ratio)[0, 1]
+
+    # if np.isnan(corr):
+    #     print("Correlation is NaN !")
+    #     print(ft_ratio, ec_ratio)
+    #     print(corr)
+    #     exit()
+
+    if return_scatter:
+        return corr, n_nans, ft_ratio, ec_ratio
+    return corr, n_nans
 
 # Permutation Testing
 

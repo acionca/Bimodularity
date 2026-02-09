@@ -10,6 +10,8 @@ import h5py
 
 import nibabel as nib
 
+from bundle import fix_thalamus
+
 
 def save(pickle_filename: str, iterable: object) -> None:
     """
@@ -417,12 +419,13 @@ def get_ec_data(
     ec_mat = ec_data["conv"]
 
     if remove_neg:
+        negative_mask = ec_mat < 0
         if verbose:
             print(
-                f"Removing {np.sum(ec_mat < 0)/ec_mat.size*100:.2f}% negative weights"
-                " from EC matrix",
+                f"Removing {np.sum(negative_mask)/ec_mat.size*100:.2f}% negative weights"
+                f" from EC matrix",
             )
-        ec_mat[ec_mat < 0] = 0
+        ec_mat[negative_mask] = 0
 
     return ec_mat
 
@@ -443,12 +446,24 @@ def load_nodal_fmri(
     # task = "language"
 
     all_fnames = sorted([f for f in os.listdir(path_to_fmri) if task in f])
+    # all_fnames = [f for f in os.listdir(path_to_fmri) if "timeseries" in f]
+    print(all_fnames)
     # all_fnames = [f for f in all_fnames if f"{sub}" in f]
-    print(f"Found {len(all_fnames)} matching files")
+    # print(f"Found {len(all_fnames)} matching files")
 
     all_nodals = [
-        np.genfromtxt(op.join(path_to_fmri, f), delimiter=",") for f in all_fnames
+        np.genfromtxt(op.join(path_to_fmri, f), delimiter=",")
+        for f in all_fnames
+        if "timeseries" in f
     ]
+    print(f"Found {len(all_nodals)} timeseries")
+
+    all_reg = [
+        np.genfromtxt(op.join(path_to_fmri, f), delimiter=",")
+        for f in all_fnames
+        if "regressor" in f
+    ]
+    print(f"Found {len(all_reg)} regressors")
 
     if not concat:
         return all_nodals
@@ -457,8 +472,21 @@ def load_nodal_fmri(
         print("Nodal fMRI has shape:", nodal_fmri.shape)
 
         all_lengths = [len(n) for n in all_nodals]
+        all_para_lengths = [len(n) for n in all_reg]
+
+        for i, (l_nodal, l_para) in enumerate(zip(all_lengths, all_para_lengths)):
+            if l_nodal != l_para:
+                print(
+                    f"Warning: Length mismatch between nodal fMRI ({l_nodal}) and",
+                    f" paradygm ({l_para}) for subject {i} !",
+                )
+                all_reg[i] = all_reg[i][:l_nodal]
 
         # TODO: Implement the paradygm loading and concatenation
+        if "rest" not in task:
+            paradygm = np.concatenate(all_reg, axis=0).astype(int)
+        else:
+            paradygm = np.zeros(len(nodal_fmri), dtype=int)
         # if "rest" not in task:
         #     path_to_paradygm = op.join(
         #         path_to_fmri, fname.replace("timeseries", "regressor")
@@ -467,7 +495,7 @@ def load_nodal_fmri(
         # else:
         #     paradygm = np.zeros(len(nodal_fmri), dtype=int)
 
-        return nodal_fmri, all_lengths  # , paradygm
+        return nodal_fmri, all_lengths, paradygm
 
 
 def load_nodal_mat(
@@ -559,37 +587,174 @@ def get_lobe_info(scale, labels, path_to_lobe="./results/atlas_correspondence"):
     lobe_sizes = lobe_df["lobe_id_reorder"].value_counts().sort_index().values
     lobe_labels = [lobe_labels[old_id] for old_id in new_order]
 
+    if len(lobe_labels) > len(lobe_sizes):
+        lobe_sizes = np.append(lobe_sizes, 1)  # for brainstem
+
     return order_by_lobe, lobe_sizes, lobe_labels, lobe_df
 
 
-def get_ftract_data(path_to_ftract, scale, maxdelay=50, feature="peak_delay"):
+def get_ftract_confidence(
+    path_to_features,
+    delay_max=None,
+    atlas_year="2008",
+    min_measurements=0,
+    min_implants=0,
+):
+    if delay_max is None:
+        delay_max = int(path_to_features.split("/")[-1])
+        print(delay_max)
+
+    if atlas_year == "2008":
+        n_imp_fname = op.join(path_to_features, "Laus2018_NImplants.txt")
+        unq_imp_fname = op.join(path_to_features, "Laus2018_NUniqueImplantCounts.txt")
+
+        n_implants = np.genfromtxt(n_imp_fname, dtype=float)
+        n_unq_implants = np.genfromtxt(unq_imp_fname, dtype=float)
+    else:
+        n_implants = np.genfromtxt(
+            op.join(
+                path_to_features,
+                f"max_peak_delay_{delay_max}__zth5/min_value_gen__0/implantation_name/N_with_value.txt.gz",
+            ),
+            dtype=float,
+        )
+        count_unq = np.genfromtxt(
+            op.join(
+                path_to_features,
+                f"max_peak_delay_{delay_max}__zth5/min_value_gen__0/implantation_name/count_unique_str.txt.gz",
+            ),
+            dtype=float,
+        )
+        n_unq_implants = np.nan_to_num(n_implants / count_unq)
+        # n_unq_implants = np.nan_to_num(count_unq)
+        n_implants = n_implants.astype(float)
+
+    implants_mask = n_unq_implants > min_implants
+    implants_mask = np.logical_and(implants_mask, n_implants > min_measurements)
+
+    return implants_mask
+
+
+def get_ftract_data(
+    path_to_ftract,
+    scale,
+    atlas_year="2008",
+    maxdelay=50,
+    feature=None,
+    return_conf=False,
+    min_measurements=0,
+    min_implants=0,
+    verbose=False,
+    # conf_threshold=0.0,
+    # implant_threshold=0,
+    # unq_implant_threshold=0,
+):
     scale2nroi = {1: 33, 2: 60, 3: 125, 4: 250}
-    path_to_feat = op.join(
-        path_to_ftract, f"Lausanne2008-{scale2nroi[scale]}/15_inf/{maxdelay}"
-    )
 
     # /Users/acionca/data/F-TRACT-Lausanne2008/Lausanne2008-125/Lausanne2008-125_2018.txt
-    ftract_labels = np.genfromtxt(
-        op.join(
+    if atlas_year == "2008":
+        path_to_feat = op.join(
             path_to_ftract,
-            f"Lausanne2008-{scale2nroi[scale]}/Lausanne2008-{scale2nroi[scale]}_2018.txt",
-        ),
-        dtype=str,
-    )
+            f"Lausanne{atlas_year}-{scale2nroi[scale]}/15_inf/{maxdelay}",
+        )
+        ftract_labels = np.genfromtxt(
+            op.join(
+                path_to_ftract,
+                f"Lausanne{atlas_year}-{scale2nroi[scale]}/Lausanne{atlas_year}-{scale2nroi[scale]}_2018.txt",
+            ),
+            dtype=str,
+        )
 
-    path_to_prob = op.join(path_to_feat, "probability_2018.txt")
-    prob = np.genfromtxt(path_to_prob)
+        path_to_prob = op.join(path_to_feat, "probability_2018.txt")
+        prob = np.genfromtxt(path_to_prob)
+        is_not_wm = np.ones(len(ftract_labels), dtype=bool)
+    else:
+        path_to_feat = op.join(
+            path_to_ftract, f"Lausanne{atlas_year}-scale{scale}/15_inf/{maxdelay}"
+        )
+        path_to_prob = op.join(path_to_feat, "probability.txt")
+
+        all_labels = np.genfromtxt(
+            op.join(
+                path_to_ftract,
+                f"Lausanne{atlas_year}-scale{scale}",
+                f"Lausanne2018-scale{scale}.txt",
+            ),
+            dtype=str,
+        )
+
+        is_not_wm = np.array(["wm-" not in lab for lab in all_labels])
+        labels_no_wm = np.array(all_labels)[is_not_wm]
+
+        is_not_wm = np.concatenate([is_not_wm, [False]])  # for unlabelled
+
+        prob = np.genfromtxt(path_to_prob)
+        ftract_labels, prob = fix_thalamus(
+            labels_no_wm, matrix=prob[is_not_wm][:, is_not_wm]
+        )
+
+    # path_to_conf = op.join(path_to_feat, "Laus2018_ConfidenceMask.txt")
+    # conf = np.genfromtxt(path_to_conf)
+    # low_conf_mask = conf <= conf_threshold
+
+    conf = get_ftract_confidence(
+        path_to_features=path_to_feat,
+        atlas_year=atlas_year,
+        delay_max=maxdelay,
+        min_measurements=min_measurements,
+        min_implants=min_implants,
+    )
+    low_conf_mask = conf == False
+
+    if verbose:
+        print(
+            f"{np.sum(low_conf_mask)} entries have low-confidence (out of {low_conf_mask.size})"
+        )
+
+    path_to_feat_list = op.join(
+        path_to_feat, f"max_peak_delay_{maxdelay}__zth5", "min_value_gen__0"
+    )
+    all_features = [f for f in os.listdir(path_to_feat_list) if "DS_Store" not in f]
+
+    if atlas_year == "2008":
+        data_fname = "nan_median_abs_deviation.txt_2018.gz"
+    else:
+        # data_fname = "nan_median_abs_deviation.txt.gz"
+        data_fname = "nanquantile_0.5.txt.gz"
+    all_features = [
+        f
+        for f in all_features
+        if data_fname in os.listdir(op.join(path_to_feat_list, f))
+    ]
+
+    if verbose:
+        print(f"Data fname is : {data_fname}")
+
+    delay_dict = {}
+    for f in all_features:
+        # mat = np.nan_to_num(np.genfromtxt(op.join(path_to_feat_list, f, data_fname)))
+        mat = np.genfromtxt(op.join(path_to_feat_list, f, data_fname))
+        mat[low_conf_mask] = np.nan
+
+        if atlas_year == "2018":
+            mat = mat[is_not_wm][:, is_not_wm]
+            _, mat = fix_thalamus(labels_no_wm, matrix=mat)
+
+        delay_dict[f] = mat
+
+    if feature is not None:
+        feat_name = [f for f in all_features if feature in f][0]
+        if verbose:
+            print(f"Selected feature is: {feat_name}")
+        delay = delay_dict[feat_name]
+    else:
+        delay = delay_dict
 
     # max_peak_delay_50__zth5/min_value_gen__0/feature_peak_delay_zth5/nan_median_abs_deviation.txt_2018.gz
-    delay = np.genfromtxt(
-        op.join(
-            path_to_feat,
-            f"max_peak_delay_{maxdelay}__zth5",
-            "min_value_gen__0",
-            f"feature_{feature}_zth5",
-            "nan_median_abs_deviation.txt_2018.gz",
-        )
-    )
+    # delay = np.genfromtxt(op.join(path_to_feat_list, data_fname))
+    # delay = np.nan_to_num(delay)
 
-    delay = np.nan_to_num(delay)
+    if return_conf:
+        return prob, conf, delay, ftract_labels
+
     return prob, delay, ftract_labels
