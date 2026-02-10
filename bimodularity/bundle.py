@@ -476,29 +476,23 @@ def compute_edge_to_bundle_distance(
     graph,
     labels,
     scale,
-    path_to_data="/Users/acionca/data/",
+    path_to_edge_centroids,
+    path_to_atlas_centroids,
     a_bundles_labels=None,
     edge_n_points=12,
 ):
-    path_to_a_bundles = op.join(path_to_data, "atlas_SCIL")
-    centroid_dir = op.join(
-        path_to_data,
-        "atlas_data",
-        "centroids",
-        f"scale{scale}",
-        f"group_centroids_scale{scale}",
-    )
-
     if a_bundles_labels is None:
         a_bundles_labels = pd.read_csv(
-            op.join(path_to_a_bundles, "atlas", "bundle_names.csv")
+            op.join(path_to_atlas_centroids, "bundle_names.csv")
         )
         a_bundles_labels = a_bundles_labels.rename(columns={"Unnamed: 0": "BundleNum"})
 
     all_a_cent = []
     for a_i, a_name in enumerate(a_bundles_labels.BundleName):
         # print(a_i, a_name)
-        b_cent_fname = op.join(path_to_a_bundles, "centroids", f"{a_name}_centroid.trk")
+        b_cent_fname = op.join(
+            path_to_atlas_centroids, "centroids", f"{a_name}_centroid.trk"
+        )
         a_slines = nib.streamlines.load(b_cent_fname).streamlines
         a_slines = set_number_of_points(a_slines, nb_points=edge_n_points)
         all_a_cent.append(a_slines)
@@ -513,7 +507,7 @@ def compute_edge_to_bundle_distance(
             b_id, b_id_mat, labels, scale=scale
         )
         tract = get_bundle_centroid(
-            centroid_dir,
+            path_to_edge_centroids,
             scale,
             selected_bundles=selected_bundles,
             selected_bundles_dir=selected_bundles_dir,

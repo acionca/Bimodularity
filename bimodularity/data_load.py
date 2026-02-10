@@ -10,7 +10,7 @@ import h5py
 
 import nibabel as nib
 
-from bundle import fix_thalamus
+from .bundle import fix_thalamus
 
 
 def save(pickle_filename: str, iterable: object) -> None:

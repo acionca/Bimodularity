@@ -22,9 +22,6 @@ from pingouin import corr as p_corr
 from joblib import Parallel, delayed
 from tqdm.notebook import tqdm
 
-from graph_examples import toy_random
-
-
 # Some directed modularity tools
 def configuration_null(a_mat: np.ndarray, null_model: str = "outin"):
     k_in = a_mat.sum(axis=0).reshape((1, -1))
@@ -263,38 +260,6 @@ def SVD_prediction(
 
         return results
     return n_error, sum(disagree), u_quad, v_quad
-
-
-def SVD_benchmark(
-    e_prob_range: list,
-    con_prob_range: list,
-    out_prob_range: list,
-    n_nodes: int = 10,
-    n_repeats: int = 10,
-    **kwargs,
-):
-
-    results = np.zeros(
-        (n_repeats, len(e_prob_range), len(con_prob_range), len(out_prob_range), 4)
-    )
-    for i, e_prob in enumerate(e_prob_range):
-        for j, con_prob in enumerate(con_prob_range):
-            for k, out_prob in enumerate(out_prob_range):
-                for rep in range(n_repeats):
-                    a_mat = toy_random(
-                        n_nodes=n_nodes,
-                        edge_prob=e_prob,
-                        con_prob=con_prob,
-                        out_prob=out_prob,
-                        directed=True,
-                    )
-
-                    results[rep, i, j, k] = SVD_prediction(
-                        a_mat, return_dict=False, **kwargs
-                    )
-
-    return results
-
 
 # Community detection part
 

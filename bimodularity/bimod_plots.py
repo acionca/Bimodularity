@@ -10,7 +10,9 @@ from matplotlib.cm import ScalarMappable
 import pandas as pd
 import numpy as np
 from scipy.linalg import block_diag
-from scipy.stats import gaussian_kde
+from scipy.stats import gaussian_kde, spearmanr
+from scipy.cluster.hierarchy import dendrogram, fcluster
+from sklearn.linear_model import LinearRegression
 import networkx as nx
 
 import os.path as op
@@ -37,12 +39,13 @@ from dipy.tracking.streamline import (
     set_number_of_points,
     select_random_set_of_streamlines,
 )
+
 from nilearn.datasets import fetch_surf_fsaverage
 from nilearn.surface import load_surf_mesh
 
-import dgsp
-import bundle
-from palettes import (
+from . import dgsp
+from . import bundle
+from .palettes import (
     CLUSTER,
     CLUSTER_CB,
     CLUSTER_SOFT,
@@ -1359,6 +1362,114 @@ def plot_summary_graph(
         axes.legend(handles=handles, ncols=2, fontsize=14)
 
 
+def plot_dendrogram(model, **kwargs):
+    # Create linkage matrix and then plot the dendrogram
+
+    # create the counts of samples under each node
+    counts = np.zeros(model.children_.shape[0])
+    n_samples = len(model.labels_)
+    for i, merge in enumerate(model.children_):
+        current_count = 0
+        for child_idx in merge:
+            if child_idx < n_samples:
+                current_count += 1  # leaf node
+            else:
+                current_count += counts[child_idx - n_samples]
+        counts[i] = current_count
+
+    linkage_matrix = np.column_stack(
+        [model.children_, model.distances_, counts]
+    ).astype(float)
+
+    # Plot the corresponding dendrogram
+    return dendrogram(linkage_matrix, **kwargs)
+
+
+def styled_dendrogram(
+    Z,
+    k=None,
+    cut_height=None,
+    top_color="k",
+    cmap=None,
+    p=0,
+    lw=2,
+    dyn_lw=True,
+    line_styles=None,
+    ax=None,
+    **kwargs,
+):
+    """
+    Draw a dendrogram with custom per-branch style.
+    line_styles: list of dicts, same length as number of merges.
+    Each dict can have keys like 'color', 'linewidth', 'linestyle'.
+    """
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 5))
+
+    d = dendrogram(Z, no_plot=True, **kwargs)
+    n_leaves = len(d["leaves"])
+
+    ordered_labs = None
+    if k is not None:
+        labs = fcluster(Z, t=k, criterion="maxclust")
+        ordered_labs = labs[d["leaves"]]
+    elif cut_height is not None:
+        labs = fcluster(Z, t=cut_height, criterion="distance")
+        ordered_labs = labs[d["leaves"]]
+
+    print(labs.min(), labs.max())
+
+    if cmap is None:
+        cmap = plt.get_cmap("tab20")
+
+    cluster_colors = {}
+    if ordered_labs is not None:
+        uniq = np.unique(ordered_labs)
+        if len(uniq) == 1:
+            cluster_colors[uniq[0]] = cmap(1)
+        else:
+            for i, u in enumerate(uniq):
+                cluster_colors[u] = cmap((i + 1) / (len(uniq)))
+
+    for i, (xs, ys) in enumerate(zip(d["icoord"], d["dcoord"])):
+        height = max(ys)
+
+        if height < p:
+            continue
+        # height = min(ys)
+        if (cut_height is not None) and (height > cut_height):
+            color = top_color
+            l_lw = lw / 2 if dyn_lw else lw
+        elif ordered_labs is None:
+            # fallback to provided style or black
+            color = (
+                line_styles[i].get("color")
+                if line_styles and i < len(line_styles) and "color" in line_styles[i]
+                else "k"
+            )
+        else:
+            # map branch x-range to leaf index range in the leaf order
+            left_x, right_x = min(xs), max(xs)
+            left_idx = int(np.clip(np.floor((left_x - 5) / 10 + 1e-9), 0, n_leaves - 1))
+            right_idx = int(
+                np.clip(np.ceil((right_x - 5) / 10 - 1e-9), 0, n_leaves - 1)
+            )
+            branch_labels = ordered_labs[left_idx : (right_idx + 1)]
+            # choose majority cluster for that branch
+            vals, counts = np.unique(branch_labels, return_counts=True)
+            maj = vals[np.argmax(counts)]
+            color = cluster_colors.get(maj, top_color)
+            l_lw = lw
+
+        style = line_styles[i] if line_styles and i < len(line_styles) else {}
+        # ensure we don't pass 'color' from style (we override it)
+        style = {k: v for k, v in style.items() if k != "color"}
+        ax.plot(xs, ys, color=color, lw=l_lw, **style)
+
+    return d, ax
+
+
 def get_camera_pos(view="transverse"):
     if (view == "transverse-vertical") or ("verti" in view):
         yoffset = -15
@@ -1839,10 +1950,32 @@ def plot_trk(
     return axes
 
 
+def get_loo_curves(e_ratio, f_ratio, x_plot=None):
+    if x_plot is None:
+        x_plot = np.linspace(0, 1, 100)
+
+    all_yvals = []
+    all_corrs = []
+    for k, _ in enumerate(f_ratio):
+        loo_mask = ~np.eye(len(f_ratio), dtype=bool)[k]
+        ftract_loo = f_ratio[loo_mask]
+        ec_loo = e_ratio[loo_mask]
+
+        # all_corrs.append(np.corrcoef(ec_loo, ftract_loo)[0, 1])
+        all_corrs.append(spearmanr(ec_loo, ftract_loo)[0])
+
+        reg = LinearRegression().fit(ec_loo.reshape(-1, 1), ftract_loo.reshape(-1, 1))
+        reg.score(ec_loo.reshape(-1, 1), ftract_loo.reshape(-1, 1))
+
+        y_vals = reg.intercept_[0] + reg.coef_[0] * x_plot
+        all_yvals.append(y_vals)
+
+    return np.array(all_yvals), np.array(all_corrs)
+
+
 def plot_yeo_summary(
     subnet_mat,
     yeo_labels,
-    yeo_colors,
     cmap,
     fig=None,
     axes=None,
