@@ -12,7 +12,7 @@ This directory contains brain connectivity data and derivatives used to study di
 
 **Repository**: https://github.com/connectomicslab/probconnatlas
 
-Probabilistic atlas of white matter connectivity that provides structural connectivity matrices (see [derivative](#structural-connectivity)) along with probabilistic fiber bundle maps and streamline centroids. Used as the structural backbone for the directed connectome.
+Probabilistic atlas of white matter connectivity that provides structural connectivity matrices (see [derivatives](#structural-connectivity)) along with probabilistic fiber bundle maps and streamline centroids. Used as the structural backbone for the directed connectome.
 
 - `./BundleAtlas/centroids/scale2/lausanne2018.scale2.sym.corrected+aseg_MaxProb.nii` is the volumetric definition of gray matter regions used in the atlas.
 - `./BundleAtlas/centroids/scale2/group_centroids_scale2/wm.connatlas.scale2.centroids.h5.gz` is the centroid data. In detail, each edge of the structural connectome is defined by a set of white matter streamlines which are then summarized into 20 centroids.
