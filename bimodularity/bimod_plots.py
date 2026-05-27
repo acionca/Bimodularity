@@ -1125,7 +1125,10 @@ def random_circle_patch(n_samples: int, center_offset: tuple = (0, 0), rmax: flo
 
 
 def generate_grid_circle(
-    n_samples: int, center_offset: tuple = (0, 0), radius: float = 1.0
+    n_samples: int,
+    center_offset: tuple = (0, 0),
+    radius: float = 1.0,
+    rand_radius: bool = False,
 ):
     n_r = 2
     n_theta = n_samples - 1
@@ -1134,8 +1137,12 @@ def generate_grid_circle(
     theta = np.linspace(0, 2 * np.pi, n_theta, endpoint=False)
     # r, theta = np.meshgrid(r, theta)
     theta, r = np.meshgrid(theta, r)
-    x = (r * np.cos(theta)).flatten() + center_offset[0]
-    y = (r * np.sin(theta)).flatten() + center_offset[1]
+
+    if rand_radius:
+        rand_r = np.random.uniform(0, 0.8 * radius, size=n_theta)
+
+    x = ((r - rand_r) * np.cos(theta)).flatten() + center_offset[0]
+    y = ((r - rand_r) * np.sin(theta)).flatten() + center_offset[1]
     return np.vstack((x, y))[:, n_samples - 2 :]
     # return x, y
 
@@ -1147,6 +1154,7 @@ def circular_layout(
     small_radius: float = 0.3,
     return_dict: bool = False,
     even_circles: bool = False,
+    rand_radius: bool = False,
     offset: Optional[float] = None,
 ):
     if offset is None:
@@ -1165,15 +1173,19 @@ def circular_layout(
         * radius
     )
 
-    if even_circles:
-        circular_pos = np.array(
-            [generate_grid_circle(n_per_com, c, small_radius) for c in circular_centers]
-        )
-    else:
-        circular_pos = np.array(
-            [random_circle_patch(n_per_com, c, small_radius) for c in circular_centers]
-        )
-    circular_pos = np.swapaxes(circular_pos, 0, 1).reshape(2, -1)
+    if isinstance(n_per_com, int):
+        n_per_com = [n_per_com] * n_blocks
+
+    circular_pos = [
+        generate_grid_circle(n_per_com[i], c, small_radius, rand_radius=rand_radius)
+        for i, c in enumerate(circular_centers)
+    ]
+
+    circular_pos = np.concatenate(circular_pos, axis=1)
+
+    if not even_circles:
+        pass
+        # circular_pos = np.swapaxes(circular_pos, 0, 1).reshape(2, -1)
 
     if return_dict:
         circ_dict = {i: (c[0], c[1]) for i, c in enumerate(circular_pos.T)}
@@ -1473,8 +1485,10 @@ def styled_dendrogram(
 def get_camera_pos(view="transverse"):
     if (view == "transverse-vertical") or ("verti" in view):
         yoffset = -15
-        position = (0, yoffset, 400)
-        focal_point = (0, yoffset, 0)
+        y_pos = 80
+        # position = (0, yoffset, 400)
+        position = (0, y_pos + yoffset, 400)
+        focal_point = (0, yoffset, y_pos)
         view_up = (0.0, 0.0, 0.0)
     elif (view == "transverse") or ("tra" in view):
         xoffset = 8
@@ -1595,12 +1609,13 @@ def get_tube_actor(
 
 def apply_actor_parameters(tube_actor, brain_actors, gloss_brain=False):
 
-    prop = tube_actor.GetProperty()
+    if tube_actor is not None:
+        prop = tube_actor.GetProperty()
 
-    prop.SetAmbient(0.4)  # base light
-    prop.SetDiffuse(0.6)  # directional light response
-    prop.SetSpecular(0.05)  # shininess amount
-    prop.SetSpecularPower(5)  # shininess tightness
+        prop.SetAmbient(0.4)  # base light
+        prop.SetDiffuse(0.6)  # directional light response
+        prop.SetSpecular(0.05)  # shininess amount
+        prop.SetSpecularPower(5)  # shininess tightness
 
     for act in brain_actors:
         p = act.GetProperty()
@@ -1704,6 +1719,7 @@ def plot_kde(
     alpha=0.8,
     normalize=True,
     vertical=False,
+    lw=2,
 ):
 
     if ax is None:
@@ -1725,10 +1741,10 @@ def plot_kde(
         x_plot = data_range
         y_plot = y_val
 
-    ax.plot(x_plot, y_plot, lw=2, color=color, alpha=alpha)
+    ax.plot(x_plot, y_plot, lw=lw, color=color, alpha=alpha)
     if fill:
         ax.fill_between(
-            x_plot, y_plot, lw=2, color=color, alpha=alpha / 2, edgecolor="none"
+            x_plot, y_plot, lw=lw, color=color, alpha=alpha / 2, edgecolor="none"
         )
 
 
@@ -1743,6 +1759,7 @@ def plot_actors(
     fig=None,
     axes=None,
     cbar_fontsize=18,
+    scene_size=(2000, 2000),
 ):
     if axes is None:
         fig, axes = plt.subplots(figsize=(8, 8))
@@ -1755,6 +1772,7 @@ def plot_actors(
             view=view,
             axes=axes,
             overlay_slines=overlay_slines,
+            scene_size=scene_size,
         )
     else:
         if fig is None:
@@ -1766,8 +1784,8 @@ def plot_actors(
         ax_tra = fig.add_subplot(gs1[:, 0])
         b_axes = [ax_tra] + [fig.add_subplot(gs1[i, 1]) for i in range(2)]
 
-        for ax, view in zip(b_axes, ["transverse-vertical", "back", "right"]):
-            scene_size = (2000, 2000)
+        # for ax, view in zip(b_axes, ["transverse-vertical", "back", "right"]):
+        for ax, view in zip(b_axes, ["transverse-vertical", "back", "left"]):
             if "tra" in view:
                 scene_size = (2000, 3000)
             plot_bundle_surf(
@@ -1816,6 +1834,7 @@ def plot_bicom_tracts(
     cbar_fontsize=18,
     fig=None,
     axes=None,
+    scene_size=(2000, 2000),
 ):
 
     centroid_dir = op.join(
@@ -1859,6 +1878,7 @@ def plot_bicom_tracts(
         cbar_fontsize=cbar_fontsize,
         fig=fig,
         axes=axes,
+        scene_size=scene_size,
     )
 
     return axes
@@ -1878,6 +1898,7 @@ def plot_trk(
     plot_cbar=False,
     fig=None,
     axes=None,
+    scene_size=(2000, 2000),
 ):
     if isinstance(path_to_trk, list):
         print(f"Merging {len(path_to_trk)} tractogram files...")
@@ -1946,6 +1967,7 @@ def plot_trk(
         plot_cbar=plot_cbar,
         fig=fig,
         axes=axes,
+        scene_size=scene_size,
     )
     return axes
 
@@ -1985,6 +2007,8 @@ def plot_yeo_summary(
     l_lab_only=False,
     manual_arrows=False,
     net_alpha=False,
+    fontsize=12,
+    ycorr=1.05,
 ):
     angles_raw = np.linspace(-np.pi / 4, np.pi / 4, len(yeo_labels))
     all_angles = np.concatenate([np.pi + angles_raw, -angles_raw])
@@ -2072,7 +2096,7 @@ def plot_yeo_summary(
                 label_space * nodal_pos[i, 0],
                 nodal_pos[i, 1],
                 net,
-                fontsize=12,
+                fontsize=fontsize,
                 ha="right",
                 va="center",
             )
@@ -2084,9 +2108,9 @@ def plot_yeo_summary(
         for i, net in enumerate(yeo_labels):
             axes.text(
                 label_space * nodal_pos[len(yeo_labels) + i, 0],
-                nodal_pos[len(yeo_labels) + i, 1],
+                nodal_pos[len(yeo_labels) + i, 1] * ycorr,
                 net,
-                fontsize=12,
+                fontsize=fontsize,
                 ha="left",
                 va="center",
             )

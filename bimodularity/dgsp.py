@@ -440,52 +440,26 @@ def get_node_clusters(
     method="bimod",
     scale=True,
 ):
-    n_nodes = edge_clusters_mat.shape[0]
-    n_clusters = np.max(edge_clusters)
+    # e_masks = np.array([edge_clusters_mat == i+1 for i in range(edge_clusters.max())], dtype=float)
+    e_masks = (edge_clusters_mat[None, :, :] == np.arange(1, edge_clusters.max() + 1)[:, None, None]).astype(float)
+    sending_communities = e_masks.sum(axis=2)
+    receiving_communities = e_masks.sum(axis=1)
 
-    if method == "probability":
-        # Aggregate edges to nodes using cluster probability (number of edges)
-        n_per_cluster = np.zeros((n_nodes, n_clusters))
-        for cluster_id in np.arange(1, np.max(edge_clusters_mat) + 1):
-            n_per_cluster[:, cluster_id - 1] = np.sum(
-                edge_clusters_mat == cluster_id, axis=1
-            )
-            n_per_cluster[:, cluster_id - 1] += np.sum(
-                edge_clusters_mat == cluster_id, axis=1
-            )
+    if scale:
+        s_den = np.sum(edge_clusters_mat > 0, axis=1)
+        sending_communities = np.divide(
+            sending_communities,
+            s_den, where=s_den != 0,
+            out=np.zeros_like(sending_communities),
+        )
+        r_den = np.sum(edge_clusters_mat > 0, axis=0)
+        receiving_communities = np.divide(
+            receiving_communities,
+            r_den, where=r_den != 0,
+            out=np.zeros_like(receiving_communities),
+        )
 
-        cluster_prob = n_per_cluster / n_per_cluster.sum(axis=1)[:, None]
-
-        cluster_maxprob = np.argmax(cluster_prob, axis=1) + 1
-
-        return cluster_maxprob, cluster_prob
-    if "bimod" in method:
-        sending_communities = np.zeros((n_clusters, n_nodes))
-        receiving_communities = np.zeros((n_clusters, n_nodes))
-
-        for cluster_id in np.arange(1, np.max(edge_clusters_mat) + 1):
-            sending_communities[cluster_id - 1] = np.sum(
-                edge_clusters_mat == cluster_id, axis=1
-            )
-            receiving_communities[cluster_id - 1] = np.sum(
-                edge_clusters_mat == cluster_id, axis=0
-            )
-
-        if scale:
-            sending_communities = np.divide(
-                sending_communities,
-                np.sum(edge_clusters_mat > 0, axis=1),
-                where=np.sum(edge_clusters_mat > 0, axis=1) != 0,
-                out=np.zeros_like(sending_communities),
-            )
-            receiving_communities = np.divide(
-                receiving_communities,
-                np.sum(edge_clusters_mat > 0, axis=0),
-                where=np.sum(edge_clusters_mat > 0, axis=0) != 0,
-                out=np.zeros_like(receiving_communities),
-            )
-
-        return sending_communities, receiving_communities
+    return sending_communities, receiving_communities
 
 
 def bimod_index_edges(adjacency, edge_clusters_mat, scale=False):
@@ -500,9 +474,9 @@ def bimod_index_edges(adjacency, edge_clusters_mat, scale=False):
         null_contrib = null_model[edge_clusters_mat == cluster_id + 1]
 
         bimod_indices[cluster_id] = np.sum(adj_contrib - null_contrib)
-
-        if scale:
-            bimod_indices[cluster_id] /= np.sum(adj_contrib > 0)
+    
+    if scale:
+        bimod_indices /= np.sum(adjacency > 0)
 
     return bimod_indices
 
@@ -510,18 +484,15 @@ def bimod_index_edges(adjacency, edge_clusters_mat, scale=False):
 def bimod_index_nodes(adjacency, send_com, receive_com, scale=False):
     n_clusters = len(send_com)
 
-    null_model = configuration_null(adjacency, null_model="outin")
+    # null_model = configuration_null(adjacency, null_model="outin")
+    modmat = modularity_matrix(adjacency, null_model="outin")
+
+    send_fltr = send_com > 0
+    receive_fltr = receive_com > 0
 
     bimod_indices = np.zeros(n_clusters)
-
     for cluster_id in np.arange(n_clusters):
-        send_fltr = send_com[cluster_id] > 0
-        receive_fltr = receive_com[cluster_id] > 0
-
-        adj_contrib = adjacency[send_fltr][:, receive_fltr]
-        null_contrib = null_model[send_fltr][:, receive_fltr]
-
-        bimod_indices[cluster_id] = np.sum(adj_contrib - null_contrib)
+        bimod_indices[cluster_id] = np.sum(modmat[send_fltr[cluster_id]][:, receive_fltr[cluster_id]])
 
         if scale:
             # all_edges = np.sum(np.atleast_2d(send_fltr).T @ np.atleast_2d(receive_fltr))

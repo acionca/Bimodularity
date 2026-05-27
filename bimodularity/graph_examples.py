@@ -1,5 +1,7 @@
+from os import replace
 from typing import Optional, Union
 import numpy as np
+from itertools import combinations
 
 
 # Toy examples of directed graphs and communities
@@ -444,12 +446,15 @@ def toy_n_communities(
 
     if isinstance(connect_out_prob, (int, float)):
         connect_out_prob = [connect_out_prob] * (n_com * (n_com - 1) // 2)
+    
+    if isinstance(com_density, (int, float)):
+        com_density = [com_density] * n_com
 
     n_connectors = n_com * (n_com - 1) // 2
 
     communities = [
         random_graph(
-            nodes_per_com, edge_prob=com_density, directed=True, seed=seed + seed_i
+            nodes_per_com, edge_prob=com_density[seed_i], directed=True, seed=seed + seed_i
         )
         for seed_i in range(n_com)
     ]
@@ -497,11 +502,15 @@ def block_cycle(
     n_blocks: int = 3,
     com_density: float = 0.5,
     connect_density: Union[list[float], float] = 0.5,
+    size_sequence: Optional[list[int]] = None,
     seed: Optional[int] = None,
 ) -> np.ndarray:
 
     if seed is None:
         seed = int(np.random.normal(10000, 100))
+
+    if size_sequence is not None:
+        nodes_per_com = max(size_sequence)
 
     if isinstance(connect_density, (int, float)):
         connect_density = [connect_density] * n_blocks
@@ -538,4 +547,12 @@ def block_cycle(
     rows_conc = [np.concatenate(row_blocks[i], axis=1) for i in range(n_blocks)]
     adj = np.concatenate(rows_conc, axis=0)
 
+    # masking the extra nodes if size_sequence is provided
+    if size_sequence is not None:
+        rand = [np.random.choice(nodes_per_com, size=size_sequence[i], replace=False) for i in range(n_blocks)]
+        mask = [np.isin(np.arange(nodes_per_com), rand[i]) for i in range(n_blocks)]
+        mask = np.concatenate(mask)
+        adj = adj[mask][:, mask]
+
+        return adj, mask
     return adj

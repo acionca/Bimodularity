@@ -413,10 +413,16 @@ def get_ec_data(
     fix_thal=True,
     remove_neg=True,
     verbose=False,
+    new=False,
 ):
-    fname = f"Laus2018_EffConnFromSch414-scale{scale}{'OneThal'*fix_thal}.pkl"
+    fname = (
+        f"Laus2018_EffConnFromSch414-scale{scale}{'OneThal'*fix_thal}{'-NEW'*new}.pkl"
+    )
     ec_data = load(op.join(path_to_ec, fname))
     ec_mat = ec_data["conv"]
+
+    if new:
+        print("Loading NEW EC !")
 
     if remove_neg:
         negative_mask = ec_mat < 0
