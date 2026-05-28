@@ -92,13 +92,14 @@ Statistical validation through permutation testing by either:
     - `10000Perm`: number of permutations is `10000`,
     - `K13`: testing has been made for $K=13$ bicommunities,
 
-- Reshuffling the edge-to-cluster assignment to generate random bicommunity structure. This is used for non-parametric testing of the meaningful aggregation of edge asymmetry at the level of true against random bicommunities. The filename `permutations_scale2_gamma1-F_meas49_impl2-4999Perm-Abs-K3.pkl` captures the parameters of the permuation setting in which:
+- Reshuffling the edge-to-cluster assignment to generate random bicommunity structure. This is used for non-parametric testing of the meaningful aggregation of edge asymmetry at the level of true against random bicommunities. The filename `permutations_scale2_gamma1-F_meas49_impl2-4999Perm-Abs-K3-4only.pkl` captures the parameters of the permuation setting in which:
     - `scale2`: Lausanne2018 atlas scale is `2`,
     - `gamma1`: non-linear transformation to the graph asymmetry by element-wise power by a value $\gamma=1$ (no non-linearity),
     - `F_meas49_impl2`: F-Tract thresholding parameters considering strictly more than `49` measurements in strictly more than `2` implants,
     - `4999Perm`: number of permutations is `4999`,
     - `Abs`: considers the absolute value of correlations thus allowing negative correlation,
     - `K3`: permutations have been computed for the `3` highest local maxima of cluster stability,
+    - `4only`: storing data for only the 4 metrics considered,
 
 
 The permuted data and results are saved to keep a fixed state of the figures and results. While subtle changes may occur with re-computation, the results and significance are proven to remain robust.
