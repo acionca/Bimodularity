@@ -12,7 +12,7 @@ This directory contains brain connectivity data and derivatives used to study di
 
 **Repository**: https://github.com/connectomicslab/probconnatlas
 
-Probabilistic atlas of white matter connectivity that provides structural connectivity matrices (see [derivative](#structural-connectivity)) along with probabilistic fiber bundle maps and streamline centroids. Used as the structural backbone for the directed connectome.
+Probabilistic atlas of white matter connectivity that provides structural connectivity matrices (see [derivatives](#structural-connectivity)) along with probabilistic fiber bundle maps and streamline centroids. Used as the structural backbone for the directed connectome.
 
 - `./BundleAtlas/centroids/scale2/lausanne2018.scale2.sym.corrected+aseg_MaxProb.nii` is the volumetric definition of gray matter regions used in the atlas.
 - `./BundleAtlas/centroids/scale2/group_centroids_scale2/wm.connatlas.scale2.centroids.h5.gz` is the centroid data. In detail, each edge of the structural connectome is defined by a set of white matter streamlines which are then summarized into 20 centroids.
@@ -25,12 +25,16 @@ Probabilistic atlas of white matter connectivity that provides structural connec
 
 Intracranial sEEG recordings from patients with epilepsy providing ground-truth measurements of electrical signal propagation between brain regions. Used to validate the directionality of grouped connections identified through bicommunity analysis. Contains cortico-cortical evoked potentials (CCEPs) directed brain connectivity.
 
+In the original dataset:
 - `./F-Tract/Lausanne2018-scale2/Lausanne2018-scale2.txt` is the parcel labels and order of the F-Tract dataset.
 - `./F-Tract/Lausanne2018-scale2/15_inf/50/probability.txt` is the matrix of F-Tract probability that captures the proportion of patients in which a directed connection exists between regions pairs.
 - `./F-Tract/Lausanne2018-scale2/15_inf/50/max_peak_delay_50__zth5/min_value_gen__0` is the directory in which F-Tract features are stored. Each feature has a specific directory  (e.g., `feature_ampl_zth5`) in which several files can be found. Here are those that are used in the analyses:
     - `N_with_values.txt.gz`: Number of entries (meansurements)
     - `nanquantile_0.5.txt.gz`: Median of the measured value for each pairs of regions (connectivity matrix)
     - Features in `implantation_name` allow to assess the robustness of measurements by considering, for example, the total number of measurement for a feature (`N_with_values`) or the number of unique implants for a connection (ratio between `N_with_values` and `count_unique_str`).
+
+As part of the shared derivatives:
+- `./F-Tract/Lausanne2018-scale2/feature_<FEATURE>_zth5.csv` is the csv files for the preprocessed delay matrices used in the study. They correspond to delays below 50ms (`maxdelay = 50`), a minimum of 50 measurements (`minmeas = 49`), a minimum 3 unique implants (`minimpl = 2`), and they can directly be fed to the analysis pipeline.
 
 ### Segmented Anatomical White Matter Fiber Bundles (SCIL)
 
@@ -88,13 +92,14 @@ Statistical validation through permutation testing by either:
     - `10000Perm`: number of permutations is `10000`,
     - `K13`: testing has been made for $K=13$ bicommunities,
 
-- Reshuffling the edge-to-cluster assignment to generate random bicommunity structure. This is used for non-parametric testing of the meaningful aggregation of edge asymmetry at the level of true against random bicommunities. The filename `permutations_scale2_gamma1-F_meas49_impl2-4999Perm-Abs-K3.pkl` captures the parameters of the permuation setting in which:
+- Reshuffling the edge-to-cluster assignment to generate random bicommunity structure. This is used for non-parametric testing of the meaningful aggregation of edge asymmetry at the level of true against random bicommunities. The filename `permutations_scale2_gamma1-F_meas49_impl2-4999Perm-Abs-K3-4only.pkl` captures the parameters of the permuation setting in which:
     - `scale2`: Lausanne2018 atlas scale is `2`,
     - `gamma1`: non-linear transformation to the graph asymmetry by element-wise power by a value $\gamma=1$ (no non-linearity),
     - `F_meas49_impl2`: F-Tract thresholding parameters considering strictly more than `49` measurements in strictly more than `2` implants,
     - `4999Perm`: number of permutations is `4999`,
     - `Abs`: considers the absolute value of correlations thus allowing negative correlation,
     - `K3`: permutations have been computed for the `3` highest local maxima of cluster stability,
+    - `4only`: storing data for only the 4 metrics considered,
 
 
 The permuted data and results are saved to keep a fixed state of the figures and results. While subtle changes may occur with re-computation, the results and significance are proven to remain robust.

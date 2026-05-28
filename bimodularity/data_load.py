@@ -413,10 +413,16 @@ def get_ec_data(
     fix_thal=True,
     remove_neg=True,
     verbose=False,
+    new=False,
 ):
-    fname = f"Laus2018_EffConnFromSch414-scale{scale}{'OneThal'*fix_thal}.pkl"
+    fname = (
+        f"Laus2018_EffConnFromSch414-scale{scale}{'OneThal'*fix_thal}{'-NEW'*new}.pkl"
+    )
     ec_data = load(op.join(path_to_ec, fname))
     ec_mat = ec_data["conv"]
+
+    if new:
+        print("Loading NEW EC !")
 
     if remove_neg:
         negative_mask = ec_mat < 0
@@ -758,3 +764,18 @@ def get_ftract_data(
         return prob, conf, delay, ftract_labels
 
     return prob, delay, ftract_labels
+
+
+def load_ftract_matrices(path_to_ftract, scale, atlas_name="Lausanne2018"):
+    mat_dir = op.join(path_to_ftract, f"{atlas_name}-scale{scale}")
+
+    mat_fnames = sorted([f for f in os.listdir(mat_dir) if f.endswith(".csv")])
+
+    delay_dict = {}
+    for fname in mat_fnames:
+        feature_name = fname.replace(".csv", "")
+        mat = np.genfromtxt(op.join(mat_dir, fname), delimiter=",")
+
+        delay_dict[feature_name] = mat
+
+    return delay_dict
