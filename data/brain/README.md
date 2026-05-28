@@ -25,12 +25,16 @@ Probabilistic atlas of white matter connectivity that provides structural connec
 
 Intracranial sEEG recordings from patients with epilepsy providing ground-truth measurements of electrical signal propagation between brain regions. Used to validate the directionality of grouped connections identified through bicommunity analysis. Contains cortico-cortical evoked potentials (CCEPs) directed brain connectivity.
 
+In the original dataset:
 - `./F-Tract/Lausanne2018-scale2/Lausanne2018-scale2.txt` is the parcel labels and order of the F-Tract dataset.
 - `./F-Tract/Lausanne2018-scale2/15_inf/50/probability.txt` is the matrix of F-Tract probability that captures the proportion of patients in which a directed connection exists between regions pairs.
 - `./F-Tract/Lausanne2018-scale2/15_inf/50/max_peak_delay_50__zth5/min_value_gen__0` is the directory in which F-Tract features are stored. Each feature has a specific directory  (e.g., `feature_ampl_zth5`) in which several files can be found. Here are those that are used in the analyses:
     - `N_with_values.txt.gz`: Number of entries (meansurements)
     - `nanquantile_0.5.txt.gz`: Median of the measured value for each pairs of regions (connectivity matrix)
     - Features in `implantation_name` allow to assess the robustness of measurements by considering, for example, the total number of measurement for a feature (`N_with_values`) or the number of unique implants for a connection (ratio between `N_with_values` and `count_unique_str`).
+
+As part of the shared derivatives:
+- `./F-Tract/Lausanne2018-scale2/feature_<FEATURE>_zth5.csv` is the csv files for the preprocessed delay matrices used in the study. They correspond to delays below 50ms (`maxdelay = 50`), a minimum of 50 measurements (`minmeas = 49`), a minimum 3 unique implants (`minimpl = 2`), and they can directly be fed to the analysis pipeline.
 
 ### Segmented Anatomical White Matter Fiber Bundles (SCIL)
 
