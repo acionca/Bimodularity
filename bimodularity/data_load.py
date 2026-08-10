@@ -4,10 +4,12 @@ import os.path as op
 import pandas as pd
 import numpy as np
 from scipy.io import loadmat
+from joblib import Parallel, delayed
 
 import pickle
 import h5py
 
+from tqdm.notebook import tqdm
 import nibabel as nib
 
 from .bundle import fix_thalamus
@@ -349,7 +351,7 @@ def load_bundle_graph(
     data_suffix="",
     scale=1,
     b_prob_threshold=0.0,
-    slines_theshold=0,
+    slines_threshold=0,
     normalize_slines=False,
     log_slines=False,
     verbose=False,
@@ -387,7 +389,7 @@ def load_bundle_graph(
         s_mat = slines_mat.copy()
 
     s_mat[bundle_prob < b_prob_threshold] = 0
-    s_mat[slines_mat < slines_theshold] = 0
+    s_mat[slines_mat < slines_threshold] = 0
 
     if verbose:
         print(f"There are {len(labels)} nodes in the graph")
@@ -779,3 +781,167 @@ def load_ftract_matrices(path_to_ftract, scale, atlas_name="Lausanne2018"):
         delay_dict[feature_name] = mat
 
     return delay_dict
+
+
+def bpa_combine_sessions(A1, C1, sN1, A2, C2, sN2):
+    """Precision-weighted combination of two sessions, per target region."""
+    nr = A1.shape[0]
+    nu = C1.shape[1]
+
+    noInput = False
+    if np.allclose(C1, np.zeros_like(C1)) and np.allclose(C2, np.zeros_like(C2)):
+        noInput = True
+
+    A_comb = np.zeros((nr, nr))
+    C_comb = np.zeros((nr, nu))
+    cov_comb = [None] * nr             # combined per-region covariance (A+C block)
+
+    for k in range(nr):
+        if noInput:
+            m1 = A1[k, :]
+            m2 = A2[k, :]
+        else:
+            # stack this region's A row + C row (excluding confound columns)
+            m1 = np.concatenate([A1[k, :], C1[k, :]])
+            m2 = np.concatenate([A2[k, :], C2[k, :]])
+
+        # corresponding covariance block, trimmed to A+C (drop confound rows/cols)
+        S1 = sN1[k][: nr + nu, : nr + nu]
+        S2 = sN2[k][: nr + nu, : nr + nu]
+
+        P1 = np.linalg.pinv(S1)
+        P2 = np.linalg.pinv(S2)
+        P_comb = P1 + P2
+        S_comb = np.linalg.pinv(P_comb)
+        m_comb = S_comb @ (P1 @ m1 + P2 @ m2)
+
+        A_comb[k, :] = m_comb[:nr]
+        if not noInput:
+            C_comb[k, :] = m_comb[nr:]
+        cov_comb[k]  = S_comb
+
+    return A_comb, C_comb, cov_comb
+
+def get_sub_ec(sub, task_list, path_to_rdcm, rdcm_fname, bpa_combine=False):
+    missing_data = False
+    for task_i, task in enumerate(task_list):
+        rdcm_out_path = op.join(path_to_rdcm, task, sub, rdcm_fname)
+
+        if op.isfile(rdcm_out_path):
+            with h5py.File(rdcm_out_path, "r") as f:
+
+                if not np.all(np.array(f["output"]["Ep"]["A"][:]) != 0):
+                    missing_data = True
+                    # n_non_zero += 1
+
+                if task_i == 0:
+                    A1 = np.array(f["output"]["Ep"]["A"][:])
+                    C1 = np.array(f["output"]["Ep"]["C"][:]).T
+                    Sn1 = np.array([f[f_adr][:] for f_adr in f["output"]["sN"][0]])
+                else:
+                    A2 = np.array(f["output"]["Ep"]["A"][:])
+                    C2 = np.array(f["output"]["Ep"]["C"][:]).T
+                    Sn2 = np.array([f[f_adr][:] for f_adr in f["output"]["sN"][0]])
+        else:
+            missing_data = True
+            # n_missing += 1
+
+    if missing_data:
+        return None, None
+
+    if len(task_list) > 1:
+        if bpa_combine:
+            A_mat, C_mat, _ = bpa_combine_sessions(A1, C1, Sn1, A2, C2, Sn2)
+        else:
+            A_mat = (A1 + A2) / 2
+            C_mat = (C1 + C2) / 2
+    else:
+        A_mat = A1
+        C_mat = C1
+
+    # Making sure A_mat is send-receive and C_mat is N_reg x N_inputs
+    A_mat = A_mat.T
+    C_mat = C_mat.T
+
+    np.fill_diagonal(A_mat, 0)
+
+    return A_mat, C_mat
+
+
+def prepare_task_ec(task_name, path_to_rdcm, filter_strength=0, bpa_combine=False, verbose=False, njobs=1):
+    all_subs = sorted(os.listdir(op.join(path_to_rdcm, task_name)))
+
+    if verbose:
+        print(f"Found {len(all_subs)} subjects for task {task_name}")
+
+    task_list = [task_name]
+    if "LR" in task_name:
+        task_list += [task_name.replace("LR", "RL")]
+
+    rdcm_fname = f"rdcm_output_filter{filter_strength}.mat"
+
+    all_A_mats = []
+    all_C_mats = []
+
+    n_non_zero = 0
+    n_missing = 0
+
+    counter = tqdm(total=len(all_subs), desc=f"Loading {task_name} ...")
+    if njobs > 1:
+        parallel = Parallel(n_jobs=njobs, return_as="generator")
+        results = parallel(
+            delayed(get_sub_ec)(sub, task_list, path_to_rdcm, rdcm_fname, bpa_combine=bpa_combine)
+            for sub in all_subs
+        )
+
+        for A_mat, C_mat in results:
+            counter.update(1)
+            n_missing += 1
+
+            if A_mat is not None and C_mat is not None:
+                all_A_mats.append(A_mat)
+                all_C_mats.append(C_mat)
+
+    else:
+        for sub in tqdm(all_subs):
+            A_mat, C_mat = get_sub_ec(sub, task_list, path_to_rdcm, rdcm_fname, bpa_combine=bpa_combine)
+
+            counter.update(1)
+            all_A_mats.append(A_mat)
+            all_C_mats.append(C_mat)
+
+    counter.close()
+
+    # if n_non_zero > 0:
+    #     print(f"Warning: {n_non_zero} subjects ({n_non_zero/(2*len(all_A_mats))*100:.2f}%) have all-zero A matrices!")
+
+    # if n_missing > 0:
+    #     print(f"Warning: {n_missing} subjects ({n_missing/(2*len(all_A_mats))*100:.2f}%) are missing R-DCM output files!")
+
+    return all_A_mats, all_C_mats
+
+
+# def get_ec_data_task(
+#     path_to_ec="./results/atlas_correspondence",
+#     remove_neg=False,
+#     verbose=False,
+# ):
+#     fname = (
+#         f"Laus2018_EffConnFromSch414-scale{scale}{'OneThal'*fix_thal}{'-NEW'*new}.pkl"
+#     )
+#     ec_data = load(op.join(path_to_ec, fname))
+#     ec_mat = ec_data["conv"]
+
+#     if new:
+#         print("Loading NEW EC !")
+
+#     if remove_neg:
+#         negative_mask = ec_mat < 0
+#         if verbose:
+#             print(
+#                 f"Removing {np.sum(negative_mask)/ec_mat.size*100:.2f}% negative weights"
+#                 f" from EC matrix",
+#             )
+#         ec_mat[negative_mask] = 0
+
+#     return ec_mat

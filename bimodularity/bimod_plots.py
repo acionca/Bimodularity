@@ -33,7 +33,13 @@ from matplotlib.colorbar import Colorbar
 from matplotlib.patches import ArrowStyle
 
 import nibabel as nib
-from dipy.viz import window, actor
+
+from dipy import __version__ as dipy_version
+
+if dipy_version > "1.11.0":
+    from fury import window, actor
+else:
+    from dipy.viz import window, actor
 from dipy.tracking.metrics import spline
 from dipy.tracking.streamline import (
     set_number_of_points,
@@ -1544,8 +1550,11 @@ def get_brain_actors(opacity=0.3):
     for surf in ["pial_left", "pial_right"]:
         coords, faces = load_surf_mesh(fsaverage[surf])
         # surf_act = actor.surface(coords, faces, smooth="loop")
-        surf_act = actor.surface(coords, faces=faces, smooth="loop")
-        surf_act.GetProperty().SetOpacity(opacity)
+        if dipy_version > "1.11.0":
+            surf_act = actor.surface(coords, faces=faces, opacity=opacity)
+        else:
+            surf_act = actor.surface(coords, faces=faces, smooth="loop")
+            surf_act.GetProperty().SetOpacity(opacity)
         brain_actors.append(surf_act)
 
     return brain_actors
@@ -1600,22 +1609,40 @@ def get_tube_actor(
     # Add actors to the scene
     # stream_actor = actor.line(streamlines, colors=np.asarray(colors, dtype=object), linewidth=2)
 
-    return actor.streamtube(
-        slines,
-        colors=np.asarray(colors, dtype=object),
-        linewidth=linewidth,
-    )
+    if dipy_version > "1.11.0":
+        # colors_1D = np.asarray(colors, dtype=object)
+        # print("slines:", len(slines))
+        # print("slines:", slines[0].shape)
+        # print("colors:", colors_1D.shape)
+        return actor.streamtube(
+            slines,
+            colors=[cols for cols in colors],
+            radius=linewidth/2,
+        )
+    else:
+        return actor.streamtube(
+            slines,
+            colors=np.asarray(colors, dtype=object),
+            linewidth=linewidth,
+        )
 
 
 def apply_actor_parameters(tube_actor, brain_actors, gloss_brain=False):
 
     if tube_actor is not None:
-        prop = tube_actor.GetProperty()
 
-        prop.SetAmbient(0.4)  # base light
-        prop.SetDiffuse(0.6)  # directional light response
-        prop.SetSpecular(0.05)  # shininess amount
-        prop.SetSpecularPower(5)  # shininess tightness
+        if dipy_version > "1.11.0":
+            tube_actor.ambient(0.4)  # base light
+            tube_actor.diffuse(0.6)  # directional light response
+            tube_actor.specular(0.05)  # shininess amount
+            tube_actor.specularPower(5)  # shininess tightness
+        else:
+            prop = tube_actor.GetProperty()
+
+            prop.SetAmbient(0.4)  # base light
+            prop.SetDiffuse(0.6)  # directional light response
+            prop.SetSpecular(0.05)  # shininess amount
+            prop.SetSpecularPower(5)  # shininess tightness
 
     for act in brain_actors:
         p = act.GetProperty()
@@ -1647,10 +1674,13 @@ def plot_bundle_surf(
 
     if axes is None:
         fig, axes = plt.subplots(figsize=(8, 8))
-    scene = window.Scene()
 
-    # White background
-    scene.SetBackground((1, 1, 1))
+    if dipy_version > "1.11.0":
+        scene = window.Scene(background=(1, 1, 1))
+    else:
+        scene = window.Scene()
+        # White background
+        scene.SetBackground((1, 1, 1))
 
     tube_actor, brain_actors = apply_actor_parameters(tube_actor, brain_actors)
 
@@ -1685,8 +1715,11 @@ def plot_bundle_surf(
     axes.imshow(win)
 
     if overlay_slines:
-        scene2 = window.Scene()
-        scene2.SetBackground((1, 1, 1))
+        if dipy_version > "1.11.0":
+            scene2 = window.Scene(background=(1, 1, 1))
+        else:
+            scene2 = window.Scene()
+            scene2.SetBackground((1, 1, 1))
         scene2.add(tube_actor)
 
         if view is not None:
