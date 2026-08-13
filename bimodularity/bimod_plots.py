@@ -34,7 +34,8 @@ from matplotlib.patches import ArrowStyle
 
 import nibabel as nib
 
-from dipy import __version__ as dipy_version
+# from dipy import __version__ as dipy_version
+dipy_version = "1.11.0"
 
 if dipy_version > "1.11.0":
     from fury import window, actor
@@ -1821,6 +1822,8 @@ def plot_actors(
         for ax, view in zip(b_axes, ["transverse-vertical", "back", "left"]):
             if "tra" in view:
                 scene_size = (2000, 3000)
+            else:
+                scene_size = (2000, 2000)
             plot_bundle_surf(
                 tube_actor,
                 brain_actors,
@@ -1934,7 +1937,7 @@ def plot_trk(
     scene_size=(2000, 2000),
 ):
     if isinstance(path_to_trk, list):
-        print(f"Merging {len(path_to_trk)} tractogram files...")
+        # print(f"Merging {len(path_to_trk)} tractogram files...")
         all_sls = []
         bundle_index = []
         n_segments = 20

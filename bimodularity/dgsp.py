@@ -369,6 +369,10 @@ def edge_bicommunities(
         # dist_mat2 = cdist(updated_centroids[row], updated_centroids[col])
         # for i in range(n_kmeans):
         #     print(row[i], col[i], dist_mat[i, i], dist_mat2[i, i], dist_mat[i, i] < max_self_dist)
+    else:
+        # Fastest consensus clustering run
+        if clust_only:
+            return kmeans.labels_ + 1, None
 
     if return_kmeans:
         # return kmeans, edge_assignments[:, adjacency != 0].T

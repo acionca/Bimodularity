@@ -895,20 +895,21 @@ def prepare_task_ec(task_name, path_to_rdcm, filter_strength=0, bpa_combine=Fals
         )
 
         for A_mat, C_mat in results:
-            counter.update(1)
-            n_missing += 1
+            # n_missing += 1
 
             if A_mat is not None and C_mat is not None:
                 all_A_mats.append(A_mat)
                 all_C_mats.append(C_mat)
 
+            counter.update(1)
+
     else:
         for sub in tqdm(all_subs):
             A_mat, C_mat = get_sub_ec(sub, task_list, path_to_rdcm, rdcm_fname, bpa_combine=bpa_combine)
 
-            counter.update(1)
             all_A_mats.append(A_mat)
             all_C_mats.append(C_mat)
+            counter.update(1)
 
     counter.close()
 
